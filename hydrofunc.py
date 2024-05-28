@@ -51,7 +51,7 @@ def extract_Vectorbbox(srcFile):
     
 
 
-def request_locations_hubeau(bbox,dstFile,operating):
+def request_locations_hubeau(bbox,dstFile,operating,tRange=None):
 
     """
     Makes a request to https://hubeau.eaufrance.fr/api/v1/hydrometrie/referentiel/stations? and returns a geoDataFrame with station codes
@@ -60,6 +60,7 @@ def request_locations_hubeau(bbox,dstFile,operating):
     bbox: coordinates as a string "xmin ymin xmax ymax" to define the request's spatial extent [string]
     dstFile: /path/to/destination/layer.gpkg containing the geoDataFrame projected in EPSG:4326 [string]
     operating: geoDataFrame will be filtered to only still operating stations if True, or will keep all returned stations if False [python object]
+    tRange [optionnal] [list]: default is None, meaning their is no time range specified (sation observations are extracted from each station's openning date to present date or to the station's closing date). If tRange has both values specified, e.g. ["yyyy","yyyy"], values are retrieved for this time range.
     """
 
     #Import libraries
@@ -68,6 +69,7 @@ def request_locations_hubeau(bbox,dstFile,operating):
     import requests
     import json
     import shapely
+    import datetime
 
     #Split coordinates string 
     l = bbox.split()
@@ -92,9 +94,11 @@ def request_locations_hubeau(bbox,dstFile,operating):
     df_stations.drop('coordonnees', axis=1, inplace=True)
     gdf_stations = gpd.GeoDataFrame(df_stations, crs="EPSG:4326", geometry=geometry)
     
-    #Filter dataframe to only specific columns and set integer index
+    #Filter dataframe to only specific columns and drop duplicates
     champs = ['code_station','date_ouverture_station','date_fermeture_station','geometry']
     gdf_stations1 = gdf_stations[champs]
+    gdf_stations1.drop_duplicates(subset='code_station',inplace=True)
+    gdf_stations1.reset_index(drop=True,inplace=True)
 
     #Filter dataframe according to the value of operating parameter and set integer index
     if operating is True:
@@ -104,8 +108,47 @@ def request_locations_hubeau(bbox,dstFile,operating):
         gdf_stations3 = gdf_stations2.loc[m]
         gdf_stations3.set_index(pd.Index([i for i in range(len(gdf_stations3))]),inplace=True)
     else:
-        gdf_stations3 = gdf_stations1
+        gdf_stations3 = gdf_stations1.copy()
         gdf_stations3.set_index(pd.Index([i for i in range(len(gdf_stations3))]),inplace=True)
+    
+    #Filter dataframe according to the value of tRange parameter and reset index
+    
+    if tRange is not None:
+
+        deb_string = str(tRange[0])
+        deb_datetime = datetime.datetime.strptime(deb_string, '%Y')
+        deb_float = float(deb_datetime.year)
+        fin_string = str(tRange[1])
+        fin_datetime = datetime.datetime.strptime(fin_string, '%Y')
+        fin_float = float(fin_datetime.year)
+
+        gdf_stations1['date_ouverture_station'] = pd.to_datetime(gdf_stations1['date_ouverture_station'], errors='coerce')
+        gdf_stations1['date_fermeture_station'] = pd.to_datetime(gdf_stations1['date_fermeture_station'], errors='coerce')
+        
+        gdf_stations1['annee_ouverture_station'] = gdf_stations1['date_ouverture_station'].dt.year
+        gdf_stations1['annee_fermeture_station'] = gdf_stations1['date_fermeture_station'].dt.year
+
+        tmp = gdf_stations1.loc[gdf_stations1['annee_fermeture_station'].isna()]
+        tmp.loc[:,'annee_fermeture_station'] = fin_datetime.year
+        #tmp2 = gdf_stations1.loc[gdf_stations1['annee_fermeture_station'].isnull()]
+        #tmp2.loc[:,'annee_fermeture_station'] = fin_datetime.year
+        tmp3 = gdf_stations1.loc[~gdf_stations1['annee_fermeture_station'].isna()]
+        tmp4 = gdf_stations1.loc[~gdf_stations1['annee_fermeture_station'].isnull()]
+
+        gdf_stations2 = pd.concat([tmp,tmp3,tmp4])
+        gdf_stations2['annee_ouverture_station'] = gdf_stations2['annee_ouverture_station'].astype(float)
+        gdf_stations2['annee_fermeture_station'] = gdf_stations2['annee_fermeture_station'].astype(float)
+        gdf_stations2.set_index(pd.Index([i for i in range(len(gdf_stations2))]),inplace=True)
+
+        m = (gdf_stations2['annee_ouverture_station'] <= deb_float) & (gdf_stations2['annee_fermeture_station'] >= fin_float)
+        
+        gdf_stations3 = gdf_stations2.loc[m]
+
+        print(f"{str(len(gdf_stations1))} stations matching the AoI among which {str(len(gdf_stations3))} matching the time range")
+
+    else:
+        
+        gdf_stations3 = gdf_stations1.copy()
     
     #Write dataframe to disk as .gpkg
     gdf_stations3.to_file(dstFile)
@@ -204,8 +247,6 @@ def requestFrontend_observations_hubeau(srcFile,dstFile,tRange=None):
 
     #Read station location file
     gdf = gpd.read_file(srcFile)
-    gdf.drop_duplicates(subset='code_station',inplace=True)
-    gdf.reset_index(drop=True,inplace=True)
     
     #Itération sur les stations
 
@@ -321,9 +362,12 @@ def requestFrontend_observations_hubeau(srcFile,dstFile,tRange=None):
 
 
 
-def compute_MeanMonthlyFlow(stationCode,stationsLayer,dstLayer,period,generate_plot):
+def compute_MeanMonthlyFlow_average(stationCode,stationsLayer,dstLayer,period,generate_plot):
     
     """
+    This function computes the average MMF and standard deviation of MMF over a given period for a given station, e.g. the average monthly flow in january on the period 2000-2020 for station i, and the standard deviation associated with this average MMF.
+    Another function, compute_MeanMonthlyFlow_all() is designed to compute MMF separately for each month in the period (without averaging over the period). 
+    
     stationCode: code of the station to be analyzed [string]
     stationsLayer: source layer that is the geodataframe with stations observations #must be a gdf already loaded [geopandas object]
     where columns must be labelled as follow ['code_station','date_obs_elab','resultat_obs_elab','grandeur_hydro_elab','libelle_statut','geometry']
@@ -363,104 +407,105 @@ def compute_MeanMonthlyFlow(stationCode,stationsLayer,dstLayer,period,generate_p
         fin = datetime.datetime.strptime(str(period[1]), '%Y')  
         
         
-        if dfm.date_obs_elab.min() <= deb:
+        #if dfm.date_obs_elab.min() <= deb:
             
             #Restriction du df aux années appelées
-            dfm_cut = dfm.loc[(dfm.date_obs_elab >= deb) & (dfm.date_obs_elab <= fin)]
+            #dfm_cut = dfm.loc[(dfm.date_obs_elab >= deb) & (dfm.date_obs_elab <= fin)]
     
             #Réindexation par date
-            dfm_cut.set_index('date_obs_elab',inplace=True)
-    
-            #Grouper par mois avec la moyenne comme agrégateur
-            dfm_grouped = dfm_cut.groupby(pd.Grouper(freq="M"))['resultat_obs_elab'].mean()
-    
-            #Génération des (Yi), du vecteur sigma_Y et du vecteur mu_Y
-    
-            #Préparation du df pour le regex sur les dates
-            df2 = pd.DataFrame(dfm_grouped)
-            df2.reset_index(inplace = True)
-            df2['date_obs_elab'] = df2['date_obs_elab'].astype("string")
-    
-            mu_Y = []
-            sigma_Y = []
-            
-            for i in range(12):
-    
-                #Grouper par mois en créant un df par mois : chaque df correspond à un Yi de la suite (Yi)1<i<12
-                if (i+1) <= 9:
-                    regex_pattern = r"(\d+)-0{m}-(\d+)".format(m=i+1)
-                    p = re.compile(regex_pattern)
-                    f = np.vectorize(lambda x: pd.notna(x) and bool(p.search(x)))
-                    df_month = df2[f(df2['date_obs_elab'])]
-                else:
-                    regex_pattern = r"(\d+)-{m}-(\d+)".format(m=i+1)
-                    p = re.compile(regex_pattern)
-                    f = np.vectorize(lambda x: pd.notna(x) and bool(p.search(x)))
-                    df_month = df2[f(df2['date_obs_elab'])]
-                
-                #Générer les vecteurs de barres d'erreur et de moyennes 
-                mu = df_month.resultat_obs_elab.mean()
-                sigma = df_month.resultat_obs_elab.std(skipna=True, ddof=1)
-                mu_Y.append(mu)
-                sigma_Y.append(sigma)
-                
-                df_month = df_month.iloc[0:0] #del df_month content
-          
-            #Gather monthly data in a dataframe and save it to disk as .gpkg
-           
-            dic = {'code_station':[stationCode],
-            	f"MMFmu_month1_{period[0]}{period[1]}":[mu_Y[0]],
-            	f"MMFmu_month2_{period[0]}{period[1]}":[mu_Y[1]],
-            	f"MMFmu_month3_{period[0]}{period[1]}":[mu_Y[2]],
-            	f"MMFmu_month4_{period[0]}{period[1]}":[mu_Y[3]],
-            	f"MMFmu_month5_{period[0]}{period[1]}":[mu_Y[4]],
-            	f"MMFmu_month6_{period[0]}{period[1]}":[mu_Y[5]],
-            	f"MMFmu_month7_{period[0]}{period[1]}":[mu_Y[6]],
-            	f"MMFmu_month8_{period[0]}{period[1]}":[mu_Y[7]],
-            	f"MMFmu_month9_{period[0]}{period[1]}":[mu_Y[8]],
-            	f"MMFmu_month10_{period[0]}{period[1]}":[mu_Y[9]],
-            	f"MMFmu_month11_{period[0]}{period[1]}":[mu_Y[10]],
-            	f"MMFmu_month12_{period[0]}{period[1]}":[mu_Y[11]],
-            	f"MMFsigma_month1_{period[0]}{period[1]}":[sigma_Y[0]],
-            	f"MMFsigma_month2_{period[0]}{period[1]}":[sigma_Y[1]],
-            	f"MMFsigma_month3_{period[0]}{period[1]}":[sigma_Y[2]],
-            	f"MMFsigma_month4_{period[0]}{period[1]}":[sigma_Y[3]],
-            	f"MMFsigma_month5_{period[0]}{period[1]}":[sigma_Y[4]],
-            	f"MMFsigma_month6_{period[0]}{period[1]}":[sigma_Y[5]],
-            	f"MMFsigma_month7_{period[0]}{period[1]}":[sigma_Y[6]],
-            	f"MMFsigma_month8_{period[0]}{period[1]}":[sigma_Y[7]],
-            	f"MMFsigma_month9_{period[0]}{period[1]}":[sigma_Y[8]],
-            	f"MMFsigma_month10_{period[0]}{period[1]}":[sigma_Y[9]],
-            	f"MMFsigma_month11_{period[0]}{period[1]}":[sigma_Y[10]],
-            	f"MMFsigma_month12_{period[0]}{period[1]}":[sigma_Y[11]],
-            	'geometry':[dfm.loc[0,'geometry']]
-            	}
-            	
-            dfg = pd.DataFrame(dic)
-            final_gdf = gpd.GeoDataFrame(dfg, crs="EPSG:4326")
-            final_gdf.set_geometry('geometry',inplace=True)
-            final_gdf.to_file(dstLayer)
-            
-            
-            #Draw hydrogram if specified by generate_plot=True
-            if generate_plot is True:
-                x_axis = [x+1 for x in range(12)]
-                #plt.plot(x_axis, mu_Y, 'k') #plot(x,y,format,x,y2,format2,...,x,yN,formatN)
-                plt.errorbar(x_axis, mu_Y, yerr = sigma_Y, fmt ='o')
-                #plt.axis([1, 12, np.min(mu_Y), 20]) #graph bbox xmin, xmax, ymin, ymax
-                plt.xticks(x_axis)
-                plt.ylabel('QmM moyen sur la période [l.s-1]',fontsize=9)
-                plt.xlabel('mois',fontsize=9)
-                plt.title('Hydrogramme mensuel moyen de la station {stas} sur la période {span}'.
-                          format(stas=stationCode,span=period),fontsize=9)
-                plt.savefig('./debits_mensuels_moyens/dmm_{stas}.png'.format(stas=stationCode),bbox_inches='tight')
-                plt.close() #sinon à chaque appel de la fonction la figure est dessinée sur le même graphe
+        dfm_cut = dfm.copy()
+        dfm_cut.set_index('date_obs_elab',inplace=True)
+
+        #Grouper par mois avec la moyenne comme agrégateur
+        dfm_grouped = dfm_cut.groupby(pd.Grouper(freq="M"))['resultat_obs_elab'].mean()
+
+        #Génération des (Yi), du vecteur sigma_Y et du vecteur mu_Y
+
+        #Préparation du df pour le regex sur les dates
+        df2 = pd.DataFrame(dfm_grouped)
+        df2.reset_index(inplace = True)
+        df2['date_obs_elab'] = df2['date_obs_elab'].astype("string")
+
+        mu_Y = []
+        sigma_Y = []
+        
+        for i in range(12):
+
+            #Grouper par mois en créant un df par mois : chaque df correspond à un Yi de la suite (Yi)1<i<12
+            if (i+1) <= 9:
+                regex_pattern = r"(\d+)-0{m}-(\d+)".format(m=i+1)
+                p = re.compile(regex_pattern)
+                f = np.vectorize(lambda x: pd.notna(x) and bool(p.search(x)))
+                df_month = df2[f(df2['date_obs_elab'])]
             else:
-                pass
+                regex_pattern = r"(\d+)-{m}-(\d+)".format(m=i+1)
+                p = re.compile(regex_pattern)
+                f = np.vectorize(lambda x: pd.notna(x) and bool(p.search(x)))
+                df_month = df2[f(df2['date_obs_elab'])]
             
+            #Générer les vecteurs de barres d'erreur et de moyennes 
+            mu = df_month.resultat_obs_elab.mean()
+            sigma = df_month.resultat_obs_elab.std(skipna=True, ddof=1)
+            mu_Y.append(mu)
+            sigma_Y.append(sigma)
+            
+            df_month = df_month.iloc[0:0] #del df_month content
+      
+        #Gather monthly data in a dataframe and save it to disk as .gpkg
+       
+        dic = {'code_station':[stationCode],
+            f"MMFmu_month1_{period[0]}{period[1]}":[mu_Y[0]],
+            f"MMFmu_month2_{period[0]}{period[1]}":[mu_Y[1]],
+            f"MMFmu_month3_{period[0]}{period[1]}":[mu_Y[2]],
+            f"MMFmu_month4_{period[0]}{period[1]}":[mu_Y[3]],
+            f"MMFmu_month5_{period[0]}{period[1]}":[mu_Y[4]],
+            f"MMFmu_month6_{period[0]}{period[1]}":[mu_Y[5]],
+            f"MMFmu_month7_{period[0]}{period[1]}":[mu_Y[6]],
+            f"MMFmu_month8_{period[0]}{period[1]}":[mu_Y[7]],
+            f"MMFmu_month9_{period[0]}{period[1]}":[mu_Y[8]],
+            f"MMFmu_month10_{period[0]}{period[1]}":[mu_Y[9]],
+            f"MMFmu_month11_{period[0]}{period[1]}":[mu_Y[10]],
+            f"MMFmu_month12_{period[0]}{period[1]}":[mu_Y[11]],
+            f"MMFsigma_month1_{period[0]}{period[1]}":[sigma_Y[0]],
+            f"MMFsigma_month2_{period[0]}{period[1]}":[sigma_Y[1]],
+            f"MMFsigma_month3_{period[0]}{period[1]}":[sigma_Y[2]],
+            f"MMFsigma_month4_{period[0]}{period[1]}":[sigma_Y[3]],
+            f"MMFsigma_month5_{period[0]}{period[1]}":[sigma_Y[4]],
+            f"MMFsigma_month6_{period[0]}{period[1]}":[sigma_Y[5]],
+            f"MMFsigma_month7_{period[0]}{period[1]}":[sigma_Y[6]],
+            f"MMFsigma_month8_{period[0]}{period[1]}":[sigma_Y[7]],
+            f"MMFsigma_month9_{period[0]}{period[1]}":[sigma_Y[8]],
+            f"MMFsigma_month10_{period[0]}{period[1]}":[sigma_Y[9]],
+            f"MMFsigma_month11_{period[0]}{period[1]}":[sigma_Y[10]],
+            f"MMFsigma_month12_{period[0]}{period[1]}":[sigma_Y[11]],
+            'geometry':[dfm.loc[0,'geometry']]
+            }
+            
+        dfg = pd.DataFrame(dic)
+        final_gdf = gpd.GeoDataFrame(dfg, crs="EPSG:4326")
+        final_gdf.set_geometry('geometry',inplace=True)
+        final_gdf.to_file(dstLayer)
+        
+        
+        #Draw hydrogram if specified by generate_plot=True
+        if generate_plot is True:
+            x_axis = [x+1 for x in range(12)]
+            #plt.plot(x_axis, mu_Y, 'k') #plot(x,y,format,x,y2,format2,...,x,yN,formatN)
+            plt.errorbar(x_axis, mu_Y, yerr = sigma_Y, fmt ='o')
+            #plt.axis([1, 12, np.min(mu_Y), 20]) #graph bbox xmin, xmax, ymin, ymax
+            plt.xticks(x_axis)
+            plt.ylabel('QmM moyen sur la période [l.s-1]',fontsize=9)
+            plt.xlabel('mois',fontsize=9)
+            plt.title('Hydrogramme mensuel moyen de la station {stas} sur la période {span}'.
+                      format(stas=stationCode,span=period),fontsize=9)
+            plt.savefig('./debits_mensuels_moyens/dmm_{stas}.png'.format(stas=stationCode),bbox_inches='tight')
+            plt.close() #sinon à chaque appel de la fonction la figure est dessinée sur le même graphe
         else:
+            pass
             
-            print(f"Station {str(stationCode)} does not cover the range {str(period)}")
+        #else:
+            
+        #    print(f"Station {str(stationCode)} does not cover the range {str(period)}")
 
     else:
         pass
@@ -471,6 +516,381 @@ def compute_MeanMonthlyFlow(stationCode,stationsLayer,dstLayer,period,generate_p
         pass
     else:
         return final_gdf
+
+
+
+def compute_MeanMonthlyFlow_all(stationCode,stationsLayer,dstLayer,period,epsgCode):
+    
+    """
+    This function is designed to compute MMF separately for each month in the period (without averaging over the period). 
+    
+    stationCode: code of the station to be analyzed [string]
+    stationsLayer: source layer that is the geodataframe with stations observations #must be a gdf already loaded [geopandas object]
+    where columns must be labelled as follow ['code_station','date_obs_elab','resultat_obs_elab','grandeur_hydro_elab','libelle_statut','geometry']
+    period: time window to perform the analysis upon given as a list [start,end] with date format YYYY [list]
+    generate_plot: if set to True, the function also creates a plot of MMF along the period [python object]
+    
+    dstLayer: /path/to/destination/layer.gpkg that is a geodataframe with columns = ['date','MMF_mean','MMF_std','code_station','geometry']
+    """
+    
+    import re
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import pandas as pd
+    import geopandas as gpd
+    import datetime
+    from shapely import wkt
+    
+    dfc_hydro = stationsLayer.copy()
+    
+    #Extraction des relevés hydro pour la station
+    dfc_hydro.code_station = dfc_hydro.code_station.astype("string")
+    dfc_cut = dfc_hydro[dfc_hydro.code_station.str.match(str(stationCode))]
+    l1 = len(dfc_cut)
+    dfc_cut.dropna(subset='resultat_obs_elab',axis=0,inplace=True)
+    l2 = len(dfc_cut)
+    print(f"{str(l1-l2)} null records out of out of {str(l1)} for station {stationCode}")
+
+    if dfc_cut.empty is not True:
+    
+        #Grouper par mois et calculer la moyenne
+        
+        #Convertir la colonne date en objet datetime
+        serie = dfc_cut['date_obs_elab'].astype('datetime64[ns]')
+        df = pd.DataFrame(serie,index=dfc_cut.index)
+        dfc_cut = dfc_cut[['code_station','resultat_obs_elab','grandeur_hydro_elab','libelle_statut','geometry']]
+        dfm = pd.merge(df, dfc_cut, left_index=True, right_index=True)
+        dfm.reset_index(drop=True,inplace=True)
+
+        #Vérification de la plage temporelle appelée
+        deb = datetime.datetime.strptime(str(period[0]), '%Y')
+        fin = datetime.datetime.strptime(str(period[1]), '%Y')  
+        
+        #Restriction du df aux années appelées
+        #if dfm.date_obs_elab.min() <= deb:
+            
+        #    dfm_cut = dfm.loc[(dfm.date_obs_elab >= deb) & (dfm.date_obs_elab <= fin)]
+    
+        #Réindexation par date
+        dfm_cut = dfm.copy()
+        dfm_cut.set_index('date_obs_elab',inplace=True)
+
+        #Grouper par mois avec la moyenne et l'écart-type comme agrégateur
+
+        frames = {
+                'date': [],
+                'MMF_mean': [],
+                'MMF_std': [],
+                'code_station': [],
+                'geometry': []
+                 }
+        
+        tmp = dfm_cut.groupby(pd.Grouper(freq="M"))['resultat_obs_elab'].mean()
+        mean = list(tmp)
+        frames['MMF_mean'] = frames['MMF_mean'] + [x for x in mean]
+        
+        tmp = dfm_cut.groupby(pd.Grouper(freq="M"))['resultat_obs_elab'].std(ddof=1)
+        std = list(tmp)
+        frames['MMF_std'] = frames['MMF_std'] + [x for x in std]
+
+        #Add the rest of the columns
+        #Date
+        l = [str(d) for d in list(tmp.index)]
+        frames['date'] = frames['date'] + [d[:-9] for d in l]
+        #Code station
+        code = dfm_cut['code_station'].iloc[0]
+        frames['code_station'] = frames['code_station'] + [str(code) for x in range(len(tmp))]
+        #Geometry
+        geom = dfc_hydro['geometry'].iloc[0]
+        frames['geometry'] = frames['geometry'] + [str(geom) for x in range(len(tmp))]
+        #Convert to geodataframe and write to disk
+        df = pd.DataFrame(frames)
+        df['geometry'] = df['geometry'].apply(wkt.loads)
+        gdf = gpd.GeoDataFrame(df,geometry='geometry',crs=f"EPSG:{str(epsgCode)}")
+        gdf.to_file(dstLayer)
+
+        #else:
+        #    pass
+    
+    else:
+        pass
+
+    try:
+        gdf
+    except:
+        pass
+    else:
+        return gdf
+
+
+
+
+
+def MannKendallStat(stationCode,srcFile,datesLayerName,valuesLayerName,statistic,generate_plot=False):
+    
+    """
+    stationCode: code of station under analysis [string]
+    srcFile: /path/to/source/file.csv where temporal series is stored [string]
+    datesLayerName: name of the column containing dates, e.g. "dates" [string] #The date must be structured as yyyy-mm-dd.
+    valuesLayerName: name of the column containing values, e.g. "mean montly flows" [string]
+    statistic: the statistic that is sampled in series (e.g. "mean" or "std") [string]
+    generate_plot: set it to True if the scatter plot of the series + the Sen's slope trend must be plotted in a graph ; otherwise set it to False [default False]
+    
+    output: tuple (MK Z statistic, Sen's slope, intercept, delta)
+    """
+
+    import numpy as np
+    import scipy.stats
+    import pandas as pd
+    import os
+    import matplotlib.pyplot as plt
+    
+    ############
+    print("######################### 0th Prepare data")
+    #############
+
+    gdf = pd.read_csv(srcFile)
+    
+    tmp = gdf.copy()
+    #Sort ascending by date
+    tmp[f"{datesLayerName}"] = pd.to_datetime(tmp[f"{datesLayerName}"])
+    tmp = tmp.sort_values(by=f"{datesLayerName}")
+    tmp.reset_index(drop=True, inplace=True)
+
+    dates = list(tmp[f"{datesLayerName}"])
+    values = list(tmp[f"{valuesLayerName}"])
+
+    #############
+    print("######################### 1st Compute MK regression")
+    #############
+
+    #########
+    # MK test
+    #########
+
+    #Import time serie and removing NaN values
+    
+    cc = values.copy()
+    j_serie = [x for x in cc if not np.isnan(x)]
+    ccc = values.copy()
+    k_serie = [x for x in ccc if not np.isnan(x)]
+    
+    #Computing sign of each differences
+
+    s = []
+    Qi = []
+
+    for k in range(len(k_serie)):
+
+        Qj = []
+
+        for j in range(k+1,len(j_serie)):
+            tmp = j_serie[j]-k_serie[k]
+            if tmp > 0:
+                s.append(1)
+            elif tmp == 0:
+                s.append(0)
+            else:
+                s.append(-1)
+            Qj.append(tmp/(j-k)) #To further compute Sen's slope
+
+        for elem in range(len(Qj)):
+            Qi.append(Qj[elem])
+
+    s_sum = np.asarray(s).sum()
+
+
+    #Computing tied groups
+
+    a_serie = np.asarray(j_serie)
+    val, counts = np.unique(a_serie, return_counts=True)
+
+    g = []
+
+    for t in range(len(counts)):
+
+        prod = counts[t]*(counts[t]-1)*(2*counts[t]+5)
+        g.append(prod)
+
+    g_sum = np.asarray(g).sum()
+
+    #computing variance of sign as a function of tied groups
+
+    n = len(j_serie)
+    var_s = (1/18)*(n*(n-1)*(2*n+5)-g_sum)
+
+    #Compute test statistic Z 
+
+    if s_sum > 0:
+        z = (s_sum-1)/np.sqrt(np.asarray(var_s))
+    elif s_sum == 0:
+        z = 0
+    else:
+        z = (s_sum+1)/np.sqrt(np.asarray(var_s))
+    
+    #Compute Sen's slope estimator (see: DOI 10.1007/s11069-015-1644-7)
+    Qi_sorted = np.sort(np.asarray(Qi))
+    Qis_list = list(Qi_sorted)
+    Qi1 = Qis_list[int(np.trunc(len(Qis_list)/2))]
+    Qi2 = Qis_list[int(np.trunc((len(Qis_list)+2)/2))]
+    slope = (1/2)*(Qi1+Qi2)
+    
+    #Compute Sen's regression line
+    #https://en.wikipedia.org/wiki/Theil%E2%80%93Sen_estimator
+    #Line : y = mx + b where m = Sen's slope and b = med(bi) = med(yi - m.xi)
+    med = []
+    for y in range(len(j_serie)-1):
+        p = j_serie[y+1] - slope*y
+        med.append(p)
+
+    numeric_med = [float(x) for x in med]
+    intercept = np.median(np.asarray(numeric_med))
+    
+    #delta = flow variation between (i) the estimated flow at strating time in the serie and (ii) estimated flow at ending time in the serie, expressed in % of ((ii)-(i))/(i)
+    delta = ((slope*len(j_serie)+intercept) - intercept) / intercept
+    
+    #############
+    print("######################### 2nd Draw hypothesis test on z-value")
+    #############
+
+    #Decide whether to conduct an upward or downward test depending on the sign of z
+    
+    if z <= float(0): 
+        
+        #H0: no monotonic trend ; versus H1: downward monotonic trend
+    
+        p_value = scipy.stats.norm.cdf(z)
+        #Find alpha (significance level) such that H0 is rejected over H1, i.e. alpha | p_value < alpha (alpha such that z_value is significant)
+        c = []
+        for alpha in np.arange(0.01,0.98,1/100):
+            if p_value < alpha:
+                c.append(alpha)
+            else:
+                pass
+        if len(c) != 0:
+            first = c[0]
+            confidence = 1 - first
+        else:
+            confidence = 0
+
+    else:
+
+        #H0: no monotonic trend ; versus H1: upward monotonic trend
+        
+        p_value = 1 - scipy.stats.norm.cdf(z)
+        #Find alpha (significance level) such that H0 is rejected over H1, i.e. alpha | (1-p_value) - alpha < 0 (alpha such that z_value is significant)
+        c = []
+        for alpha in np.arange(0.01,0.98,1/100):
+            if p_value < alpha:
+                c.append(alpha)
+            else:
+                pass
+        if len(c) != 0:
+            first = c[0]
+            confidence = 1 - first
+        else:
+            confidence = 0
+
+
+    ############
+    print("######################### 3rd Plot graphs if required")
+    ############
+    
+    if generate_plot is True:
+
+        plt.plot(dates, values, 'k-', linewidth=0.5, label=f"MonthlyFlow_{statistic}")
+        plt.plot(dates,
+                 [slope*x+intercept for x in range(len(values))],
+                 'r--',
+                 linewidth=1,
+                 label=f"Global trend ({str(np.round(delta,decimals=2)*100)}% at a {str(np.round(confidence,decimals=2)*100)}% confidence level)"
+                )
+        plt.xlabel('Time series')
+        if statistic == "mean":
+            plt.ylabel('Mean Monthly Flow [l.s-1]')
+        else:
+            plt.ylabel('Monthly Flow Deviation [l.s-1]')
+        plt.legend(loc="upper right")
+        plt.title(f"Monthly flow variation and linear trend at gauging station {stationCode}") 
+        plt.savefig(f"./analysis/MannKendallRegression_MMF_{statistic}_station{stationCode}.png")
+        #plt.show()
+        plt.close()
+
+    else:
+        pass
+
+
+    return z, slope, intercept, delta, confidence
+
+
+
+
+def make_map(srcLayer,layerNameForPolygons,layerNameForLabels,plotTitle,dstFile):
+
+    """
+    Makes a map plot to render a geodataframe of polygons. Originally designed to plot results of the Mann-Kendall test. 
+
+    srcLayer: /path/to/vector/layer.gpkg [string] #Must be a ploygon-geometry geodataframe with geometry column name = 'geometry'
+    layerNameForPolygons: name of the column from which to extract data that will be plotted as polygons [string]
+    layerNameForLabels: name of the column from which to extract data that will be plotted as text labels overlapping polygons [string]
+    plotTitle: title to give to the plot [string]
+    dstFile: /path/to/destination/image.png [string]
+    
+    output: map with format .png
+    """
+
+    import geopandas as gpd
+    import matplotlib.pyplot as plt
+    from shapely.geometry import Point
+    from matplotlib.lines import Line2D
+    import contextily as ctx
+    
+    gdf = gpd.read_file(srcLayer)
+    gdf = gdf[~gdf.geometry.isnull()]
+    gdf.to_crs(3857,inplace=True) #To match contextily default crs for better rendering
+    
+    # Plot the GeoDataFrame
+    fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+    
+    # Plot the polygons using the 'layerNameForPolygons' column for colors
+    gdf.plot(column=layerNameForPolygons, ax=ax, legend=True, cmap='viridis', alpha=0.7, edgecolor=(0, 0, 0, 0.5), linewidth=0.5)
+    
+    # Add labels using the 'name' column
+    ##Round values to 2-decimal precision
+    gdf[f"{layerNameForLabels}_round"] = gdf[layerNameForLabels].round(2)
+    ##Plot
+    for idx, row in gdf.iterrows():
+        # Get the centroid of the polygon
+        centroid = row['geometry'].centroid
+        # Ensure the centroid is within the polygon, otherwise find a better point
+        if not row['geometry'].contains(centroid):
+            centroid = row['geometry'].representative_point()
+        # Place the label at the centroid or representative point
+        ax.text(centroid.x, centroid.y, row[f"{layerNameForLabels}_round"], fontsize=10, ha='center', va='center', color='black')
+    
+    # Add a title and labels (optional)
+    ax.set_title(plotTitle, pad=5, fontsize=10)
+    ax.set_xlabel('Longitude')
+    ax.set_ylabel('Latitude')
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.95)
+
+    #Add legend
+    #label_legend = Line2D([0], [0], marker='o', color='w', label='confidence_level',
+    #                  markerfacecolor='black', markersize=8)
+    #ax.legend(handles=[label_legend], loc='upper left', title='Legend')
+
+    #Add a base map
+    ctx.add_basemap(ax, source=ctx.providers.OpenStreetMap.France,alpha=0.7,crs=gdf.crs.to_string())
+    
+    # Save the figure as a PNG file
+    plt.savefig(dstFile, dpi=300)
+    
+    # Display the plot (optional)
+    #plt.show()
+    plt.close()
+
+    return
 
 
 
@@ -741,13 +1161,15 @@ def raster_to_polygons(srcFile,dstFile,epsgCode,zName,zRestriction=None):
         df = pd.concat(vectorList)
         gdf = gpd.GeoDataFrame(df, crs=f"EPSG:{str(epsgCode)}")
         gdf = gdf.set_geometry('geometry')
+        #Drop NonType geometries
+        gdfNoNull = gdf[~gdf.geometry.isnull()]
     
         #Write geodataframe to disk
         if os.path.exists(dstFile):
             os.remove(dstFile)
-            gdf.to_file(dstFile)
+            gdfNoNull.to_file(dstFile)
         else:
-            gdf.to_file(dstFile)
+            gdfNoNull.to_file(dstFile)
     
 
     else:
