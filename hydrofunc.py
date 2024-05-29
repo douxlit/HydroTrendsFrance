@@ -144,7 +144,12 @@ def request_locations_hubeau(bbox,dstFile,operating,tRange=None):
         
         gdf_stations3 = gdf_stations2.loc[m]
 
+        gdf_stations1.drop_duplicates(subset='code_station',inplace=True)
+        gdf_stations3.drop_duplicates(subset='code_station',inplace=True)
         print(f"{str(len(gdf_stations1))} stations matching the AoI among which {str(len(gdf_stations3))} matching the time range")
+
+        with open(f"log.txt", 'a') as file:
+            file.write(f"{str(len(gdf_stations1))} stations matching the AoI among which {str(len(gdf_stations3))} matching the time range\n")
 
     else:
         
@@ -358,6 +363,14 @@ def requestFrontend_observations_hubeau(srcFile,dstFile,tRange=None):
     #Write to disk 
     gdf_stations.to_file(dstFile)
 
+    #Compute the number of stations successfully fetched against the total number of stations requested
+    gdf_stations_nonull = gdf_stations.dropna(subset='resultat_obs_elab',axis=0)
+    fetched = len(list(set(gdf_stations_nonull['code_station'])))
+    requested = len(list(set(gdf_stations['code_station'])))
+    print(f"{str(requested)} stations where requested observations among which {str(fetched)} stations were fetched")
+    with open(f"log.txt", 'a') as file:
+        file.write(f"{str(requested)} stations where requested observations among which {str(fetched)} stations were fetched\n")
+
     return
 
 
@@ -388,68 +401,36 @@ def compute_MeanMonthlyFlow_average(stationCode,stationsLayer,dstLayer,period,ge
     
     #Extraction des relevés hydro pour la station
     dfc_hydro.code_station = dfc_hydro.code_station.astype("string")
-    dfc_cut = dfc_hydro[dfc_hydro.code_station.str.match(str(stationCode))]
+    dfc_cut = dfc_hydro.loc[dfc_hydro['code_station'].str.match(str(stationCode))]
     dfc_cut.dropna(subset='resultat_obs_elab',axis=0,inplace=True)
+    dfc_cut['date_obs_elab'] = dfc_cut['date_obs_elab'].astype("string")
+    dfc_cut.reset_index(drop=True,inplace=True)
 
     if dfc_cut.empty is not True:
     
         #Grouper par mois et calculer la moyenne
-        
-        #Convertir la colonne date en objet datetime
-        serie = dfc_cut.date_obs_elab.astype('datetime64[ns]')
-        df = pd.DataFrame(serie,index=dfc_cut.index)
-        dfc_cut = dfc_cut[['code_station','resultat_obs_elab','grandeur_hydro_elab','libelle_statut','geometry']]
-        dfm = pd.merge(df, dfc_cut, left_index=True, right_index=True)
-        dfm.reset_index(drop=True,inplace=True)
-        
-        #Vérification de la plage temporelle appelée
-        deb = datetime.datetime.strptime(str(period[0]), '%Y')
-        fin = datetime.datetime.strptime(str(period[1]), '%Y')  
-        
-        
-        #if dfm.date_obs_elab.min() <= deb:
-            
-            #Restriction du df aux années appelées
-            #dfm_cut = dfm.loc[(dfm.date_obs_elab >= deb) & (dfm.date_obs_elab <= fin)]
-    
-            #Réindexation par date
-        dfm_cut = dfm.copy()
-        dfm_cut.set_index('date_obs_elab',inplace=True)
-
-        #Grouper par mois avec la moyenne comme agrégateur
-        dfm_grouped = dfm_cut.groupby(pd.Grouper(freq="M"))['resultat_obs_elab'].mean()
-
-        #Génération des (Yi), du vecteur sigma_Y et du vecteur mu_Y
-
-        #Préparation du df pour le regex sur les dates
-        df2 = pd.DataFrame(dfm_grouped)
-        df2.reset_index(inplace = True)
-        df2['date_obs_elab'] = df2['date_obs_elab'].astype("string")
 
         mu_Y = []
         sigma_Y = []
         
         for i in range(12):
 
-            #Grouper par mois en créant un df par mois : chaque df correspond à un Yi de la suite (Yi)1<i<12
             if (i+1) <= 9:
-                regex_pattern = r"(\d+)-0{m}-(\d+)".format(m=i+1)
-                p = re.compile(regex_pattern)
-                f = np.vectorize(lambda x: pd.notna(x) and bool(p.search(x)))
-                df_month = df2[f(df2['date_obs_elab'])]
+                dfc_cut2 = dfc_cut.loc[dfc_cut['date_obs_elab'].str.contains(f"-0{str(i)}-")]
             else:
-                regex_pattern = r"(\d+)-{m}-(\d+)".format(m=i+1)
-                p = re.compile(regex_pattern)
-                f = np.vectorize(lambda x: pd.notna(x) and bool(p.search(x)))
-                df_month = df2[f(df2['date_obs_elab'])]
+                dfc_cut2 = dfc_cut.loc[dfc_cut['date_obs_elab'].str.contains(f"-{str(i)}-")]
+
+            if dfc_cut2.empty is not True:
+                mu = dfc_cut2['resultat_obs_elab'].mean()
+                sigma = dfc_cut2['resultat_obs_elab'].std(ddof=1)
+            else:
+                mu = np.nan
+                sigma = np.nan
             
-            #Générer les vecteurs de barres d'erreur et de moyennes 
-            mu = df_month.resultat_obs_elab.mean()
-            sigma = df_month.resultat_obs_elab.std(skipna=True, ddof=1)
             mu_Y.append(mu)
             sigma_Y.append(sigma)
-            
-            df_month = df_month.iloc[0:0] #del df_month content
+
+            dfc_cut2 = dfc_cut2.iloc[0:0] #del df_month content
       
         #Gather monthly data in a dataframe and save it to disk as .gpkg
        
@@ -478,14 +459,50 @@ def compute_MeanMonthlyFlow_average(stationCode,stationsLayer,dstLayer,period,ge
             f"MMFsigma_month10_{period[0]}{period[1]}":[sigma_Y[9]],
             f"MMFsigma_month11_{period[0]}{period[1]}":[sigma_Y[10]],
             f"MMFsigma_month12_{period[0]}{period[1]}":[sigma_Y[11]],
-            'geometry':[dfm.loc[0,'geometry']]
+            'geometry':[dfc_cut.loc[0,'geometry']]
             }
             
         dfg = pd.DataFrame(dic)
         final_gdf = gpd.GeoDataFrame(dfg, crs="EPSG:4326")
         final_gdf.set_geometry('geometry',inplace=True)
-        final_gdf.to_file(dstLayer)
         
+
+        #Elaborate advanced statistics: monthly coefficient of variation (CoV=std/mean), annual mean, annual deviation, annual CoV
+
+        final_gdf.loc[:,f'CoV_month1_{period[0]}{period[1]}'] = final_gdf[f"MMFsigma_month1_{period[0]}{period[1]}"]/final_gdf[f"MMFmu_month1_{period[0]}{period[1]}"]
+        final_gdf.loc[:,f'CoV_month2_{period[0]}{period[1]}'] = final_gdf[f"MMFsigma_month2_{period[0]}{period[1]}"]/final_gdf[f"MMFmu_month2_{period[0]}{period[1]}"]
+        final_gdf.loc[:,f'CoV_month3_{period[0]}{period[1]}'] = final_gdf[f"MMFsigma_month3_{period[0]}{period[1]}"]/final_gdf[f"MMFmu_month3_{period[0]}{period[1]}"]
+        final_gdf.loc[:,f'CoV_month4_{period[0]}{period[1]}'] = final_gdf[f"MMFsigma_month4_{period[0]}{period[1]}"]/final_gdf[f"MMFmu_month4_{period[0]}{period[1]}"]
+        final_gdf.loc[:,f'CoV_month5_{period[0]}{period[1]}'] = final_gdf[f"MMFsigma_month5_{period[0]}{period[1]}"]/final_gdf[f"MMFmu_month5_{period[0]}{period[1]}"]
+        final_gdf.loc[:,f'CoV_month6_{period[0]}{period[1]}'] = final_gdf[f"MMFsigma_month6_{period[0]}{period[1]}"]/final_gdf[f"MMFmu_month6_{period[0]}{period[1]}"]
+        final_gdf.loc[:,f'CoV_month7_{period[0]}{period[1]}'] = final_gdf[f"MMFsigma_month7_{period[0]}{period[1]}"]/final_gdf[f"MMFmu_month7_{period[0]}{period[1]}"]
+        final_gdf.loc[:,f'CoV_month8_{period[0]}{period[1]}'] = final_gdf[f"MMFsigma_month8_{period[0]}{period[1]}"]/final_gdf[f"MMFmu_month8_{period[0]}{period[1]}"]
+        final_gdf.loc[:,f'CoV_month9_{period[0]}{period[1]}'] = final_gdf[f"MMFsigma_month9_{period[0]}{period[1]}"]/final_gdf[f"MMFmu_month9_{period[0]}{period[1]}"]
+        final_gdf.loc[:,f'CoV_month10_{period[0]}{period[1]}'] = final_gdf[f"MMFsigma_month10_{period[0]}{period[1]}"]/final_gdf[f"MMFmu_month10_{period[0]}{period[1]}"]
+        final_gdf.loc[:,f'CoV_month11_{period[0]}{period[1]}'] = final_gdf[f"MMFsigma_month11_{period[0]}{period[1]}"]/final_gdf[f"MMFmu_month11_{period[0]}{period[1]}"]
+        final_gdf.loc[:,f'CoV_month12_{period[0]}{period[1]}'] = final_gdf[f"MMFsigma_month12_{period[0]}{period[1]}"]/final_gdf[f"MMFmu_month12_{period[0]}{period[1]}"]
+
+        #Compute Mean Annual Flow
+        col_list = [f"MMFmu_month{x}_{period[0]}{period[1]}" for x in range(1,13)]
+        final_gdf_mean = final_gdf[col_list]
+        final_gdfT = final_gdf_mean.T #gives a df with one column 'code_station' and former columns turned to rows
+        final_gdfT.dropna(inplace=True) #drop rows with NaN values that may have been kept in mu and sigma calculations
+        MAF = final_gdfT[0].mean()
+        final_gdf.loc[:,f'MeanAnnualFlow_{period[0]}{period[1]}'] = MAF
+
+        #Compute Mean Annual Deviation
+        col_list = [f"MMFsigma_month{x}_{period[0]}{period[1]}" for x in range(1,13)]
+        final_gdf_sigma = final_gdf[col_list]
+        final_gdfT = final_gdf_sigma.T #gives a df with one column 'code_station' and former columns turned to rows
+        final_gdfT.dropna(inplace=True) #drop rows with NaN values that may have been kept in mu and sigma calculations
+        MAD = final_gdfT[0].std(ddof=1)
+        final_gdf.loc[:,f'MeanAnnualDeviation_{period[0]}{period[1]}'] = MAD
+
+        #Compute Mean Annual CoV
+        final_gdf.loc[:,f'MeanAnnualCoV_{period[0]}{period[1]}'] = MAD/MAF
+        
+        #Write to disk 
+        final_gdf.to_file(dstLayer)
         
         #Draw hydrogram if specified by generate_plot=True
         if generate_plot is True:
@@ -825,12 +842,14 @@ def MannKendallStat(stationCode,srcFile,datesLayerName,valuesLayerName,statistic
 
 
 
-def make_map(srcLayer,layerNameForPolygons,layerNameForLabels,plotTitle,dstFile):
+def make_map(srcLayerPolygons,layerNameForPolygons,layerNameForLabels,srcLayerPoints,srcLayerPolygonsNaN,plotTitle,dstFile):
 
     """
     Makes a map plot to render a geodataframe of polygons. Originally designed to plot results of the Mann-Kendall test. 
 
-    srcLayer: /path/to/vector/layer.gpkg [string] #Must be a ploygon-geometry geodataframe with geometry column name = 'geometry'
+    srcLayerPolygons: /path/to/vector/layer.gpkg [string] For catchments with data #Must be a ploygon-geometry geodataframe with geometry column name = 'geometry'
+    srcLayerPoints: /path/to/vector/layer.gpkg [string] For outlets #Must be a point-geometry geodataframe with geometry column name = 'geometry'
+    srcLayerPolygonsNaN: /path/to/vector/layer.gpkg [string] For catchments with no data #Must be a ploygon-geometry geodataframe with geometry column name = 'geometry'
     layerNameForPolygons: name of the column from which to extract data that will be plotted as polygons [string]
     layerNameForLabels: name of the column from which to extract data that will be plotted as text labels overlapping polygons [string]
     plotTitle: title to give to the plot [string]
@@ -844,16 +863,28 @@ def make_map(srcLayer,layerNameForPolygons,layerNameForLabels,plotTitle,dstFile)
     from shapely.geometry import Point
     from matplotlib.lines import Line2D
     import contextily as ctx
+
+    # Plot
+    fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+
+    # Plot the polygons without data
+    #gdf_catchNaN = gpd.read_file(srcLayerPolygonsNaN)
+    #gdf_catchNaN = gdf_catchNaN[~gdf_catchNaN.geometry.isnull()]
+    #gdf_catchNaN.to_crs(3857,inplace=True) #To match contextily default crs for better rendering
+    #gdf_catchNaN.plot(ax=ax, color='lightgrey',alpha=0.7,edgecolor=(0, 0, 0, 0.5), linewidth=0.5)
     
-    gdf = gpd.read_file(srcLayer)
+    # Plot the polygons with data
+    gdf = gpd.read_file(srcLayerPolygons)
     gdf = gdf[~gdf.geometry.isnull()]
     gdf.to_crs(3857,inplace=True) #To match contextily default crs for better rendering
-    
-    # Plot the GeoDataFrame
-    fig, ax = plt.subplots(1, 1, figsize=(10, 8))
-    
-    # Plot the polygons using the 'layerNameForPolygons' column for colors
     gdf.plot(column=layerNameForPolygons, ax=ax, legend=True, cmap='viridis', alpha=0.7, edgecolor=(0, 0, 0, 0.5), linewidth=0.5)
+
+    # Plot the points
+    #gdf_points = gpd.read_file(srcLayerPoints)
+    #gdf_points = gdf_points[~gdf_points.geometry.isnull()]
+    #gdf_points.to_crs(3857,inplace=True)
+    #gdf_points.plot(ax=ax)
+    
     
     # Add labels using the 'name' column
     ##Round values to 2-decimal precision
@@ -917,7 +948,7 @@ def request_DEM(bbox,srcEPSG,dstFile):
     
 
     #Make the request to opentopography API
-    url = f"https://portal.opentopography.org/API/globaldem?demtype=SRTMGL1&south={str(ymin)}6&north={str(ymax)}&west={str(xmin)}&east={str(xmax)}&outputFormat=GTiff&API_Key=8aea7de3cd2f16fbdcfcc819216f5eb4"
+    url = f"https://portal.opentopography.org/API/globaldem?demtype=SRTMGL3&south={str(ymin)}6&north={str(ymax)}&west={str(xmin)}&east={str(xmax)}&outputFormat=GTiff&API_Key=8aea7de3cd2f16fbdcfcc819216f5eb4"
     print(url)
     r = requests.get(url, allow_redirects=True)
     with open(f"{dstFile[:-4]}_wgs84.tif", "wb") as f:
@@ -1336,7 +1367,7 @@ def create_subcatchments(outletsLayer,flowdirectionRaster,dstRaster,cloneMap):
     
     #Convert .txt file to .map PCRaster file
     
-    dst = f"{wd}/tmp_outlets_pcraster.map"
+    dst = f"./tmp/tmp_outlets_pcraster.map"
     if os.path.isfile(dst) is True:
         os.remove(dst)
     else:

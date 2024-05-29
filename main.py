@@ -15,12 +15,12 @@ from shapely import wkt
 ##################
 
 #Area of Interest
-AoI_filePath = "emprise.gpkg" #path to file with extension
+AoI_filePath = "envelope_4326.gpkg" #path to file with extension
 AoI_fileIsRaster = False #False if AoI is a vector file (.shp, .gpkg...); True if AoI is a raster file (.tif...)
-AoI_EPSG = 4326 #ESPG code in which AoI_filePath is projected [int] e.g. 4326
+AoI_EPSG = 4326 #ESPG code in which AoI_filePath is projected [int] e.g. 4326 #WARNING: !!has been developped with EPSG:4326 only, hence may not work with other EPSGs at this stage!!
 
 #Period of Interest
-timeRange = [1960,2020] #e.g. [2000,2020] for Water Balance Model (Wisser et al, 2010) as used in Rockstrom et al, 2023 
+timeRange = [2000,2020] #e.g. [2000,2020] for Water Balance Model (Wisser et al, 2010) as used in Rockstrom et al, 2023 
 
 #Modules to run
 runModule0 = False #True if Module 0 needs to be ran ; False if not
@@ -145,9 +145,9 @@ else:
 
 
 
-##########################################
-# Module 1: create flow accumulation map #
-##########################################
+#########################################
+# Module 1: create topographic material #
+#########################################
 
 if runModule1 is True:
 
@@ -197,6 +197,40 @@ if runModule1 is True:
     cmd = 'gdal_calc.py --overwrite --calc "{calc}" --format GTiff --type Float32 --extent=intersect --NoDataValue={nd} -A {src} --A_band 1 --outfile {dst}'.format(nd="'none'",src=src,dst=dst,calc=calc) #new scalar raster intersecting the AoI
     os.system(cmd)
     del src, dst
+
+    print("Generate subcatchments of all stations retrieved")
+
+    #Join analyzed stations to acculfux
+    gdf = gpd.read_file(f"{dataDirectory}/stations_locations.gpkg")
+    ids = np.arange(1,len(gdf)+1,1)
+    gdf.loc[:,'id'] = list(ids)
+    gdf.to_file(f"{dataDirectory}/stations_locations.gpkg")
+    points = f"{dataDirectory}/stations_locations.gpkg"
+    layer = 'id'
+    acc = f"{tmpDirectory}/accuflux_geq{str(accThreshold)}.tif"
+    dst = f"{tmpDirectory}/stations2accuflux_all.gpkg"
+    hydrofunc.join_points_to_pixels(points,layer,acc,AoI_EPSG,dst)
+    del points, gdf, layer, acc, dst
+    #Create subcatchments
+    cln = f"{tmpDirectory}/DEM.map"
+    points = f"{tmpDirectory}/stations2accuflux_all.gpkg"
+    ldd = f"{tmpDirectory}/LDD.map"
+    dst = f"{tmpDirectory}/subcatchments_all.map"
+    hydrofunc.create_subcatchments(points,ldd,dst,cln)
+    del points, ldd, dst
+    #Convert to vector file
+    src = f"{tmpDirectory}/subcatchments_all.map"
+    dst = f"{dataDirectory}/subcatchments_all.gpkg"
+    hydrofunc.raster_to_polygons(src,dst,AoI_EPSG,'catchment_id',zRestriction=None)
+    del src, dst
+    #Add station codes as catchments ids
+    stations = gpd.read_file(f"{dataDirectory}/stations_locations.gpkg")
+    catchments = gpd.read_file(f"{dataDirectory}/subcatchments_all.gpkg")
+    stations = stations[['id','code_station']]
+    m = catchments.merge(stations, left_on='catch_id', right_on='id', how='left')
+    m.drop(['catch_id','id'],axis=1,inplace=True)
+    m.to_file(f"{dataDirectory}/subcatchments_all.gpkg")
+    del m
 
     print("Flush temporary files from disk if required")
     
@@ -374,35 +408,36 @@ if runModule3 is True:
 
     print("Generate subcatchments based on the number of analyzed stations")
 
-    #Join stations to acculfux
-    gdf = gpd.read_file(f"{dataDirectory}/stations_locations.gpkg")
+    #Join analyzed stations to acculfux
+    gdf = gpd.read_file(f"{analysisDirectory}/stations_observations_mmf_average_{str(timeRange[0])}{str(timeRange[1])}_points.gpkg")
     ids = np.arange(1,len(gdf)+1,1)
     gdf.loc[:,'id'] = list(ids)
-    gdf.to_file(f"{dataDirectory}/stations_locations.gpkg")
-    points = f"{dataDirectory}/stations_locations.gpkg"
+    gdf.to_file(f"{analysisDirectory}/stations_observations_mmf_average_{str(timeRange[0])}{str(timeRange[1])}_points.gpkg")
+    points = f"{analysisDirectory}/stations_observations_mmf_average_{str(timeRange[0])}{str(timeRange[1])}_points.gpkg"
     layer = 'id'
     acc = f"{tmpDirectory}/accuflux_geq{str(accThreshold)}.tif"
-    dst = f"{tmpDirectory}/stations2accuflux.gpkg"
+    dst = f"{tmpDirectory}/stations2accuflux_analyzed.gpkg"
     hydrofunc.join_points_to_pixels(points,layer,acc,AoI_EPSG,dst)
     del points, gdf, layer, acc, dst
     #Create subcatchments
-    points = f"{tmpDirectory}/stations2accuflux.gpkg"
+    cln = f"{tmpDirectory}/DEM.map"
+    points = f"{tmpDirectory}/stations2accuflux_analyzed.gpkg"
     ldd = f"{tmpDirectory}/LDD.map"
-    dst = f"{tmpDirectory}/subcatchments.map"
+    dst = f"{tmpDirectory}/subcatchments_analyzed.map"
     hydrofunc.create_subcatchments(points,ldd,dst,cln)
     del points, ldd, dst
     #Convert to vector file
-    src = f"{tmpDirectory}/subcatchments.map"
-    dst = f"{dataDirectory}/subcatchments.gpkg"
+    src = f"{tmpDirectory}/subcatchments_analyzed.map"
+    dst = f"{dataDirectory}/subcatchments_analyzed.gpkg"
     hydrofunc.raster_to_polygons(src,dst,AoI_EPSG,'catchment_id',zRestriction=None)
     del src, dst
     #Add station codes as catchments ids
-    stations = gpd.read_file(f"{dataDirectory}/stations_locations.gpkg")
-    catchments = gpd.read_file(f"{dataDirectory}/subcatchments.gpkg")
+    stations = gpd.read_file(f"{analysisDirectory}/stations_observations_mmf_average_{str(timeRange[0])}{str(timeRange[1])}_points.gpkg")
+    catchments = gpd.read_file(f"{dataDirectory}/subcatchments_analyzed.gpkg")
     stations = stations[['id','code_station']]
     m = catchments.merge(stations, left_on='catch_id', right_on='id', how='left')
     m.drop(['catch_id','id'],axis=1,inplace=True)
-    m.to_file(f"{dataDirectory}/subcatchments.gpkg")
+    m.to_file(f"{dataDirectory}/subcatchments_analyzed.gpkg")
     del m
     
     print("Flush temporary files from disk if required")
@@ -439,7 +474,7 @@ if runModule4 is True:
     #Join with subcatchment vector file
     mmf_average = gpd.read_file(f"{analysisDirectory}/stations_observations_mmf_average_{str(timeRange[0])}{str(timeRange[1])}_points.gpkg")
     mmf_average.drop('geometry',axis=1,inplace=True)
-    catch = gpd.read_file(f"{dataDirectory}/subcatchments.gpkg")
+    catch = gpd.read_file(f"{dataDirectory}/subcatchments_analyzed.gpkg")
     m = catch.merge(mmf_average,left_on='code_station',right_on='code_station',how='left')
     m.to_file(f"{analysisDirectory}/stations_observations_mmf_average_{str(timeRange[0])}{str(timeRange[1])}_subcatchments.gpkg")
     del mmf_average, m
@@ -452,7 +487,7 @@ if runModule4 is True:
 
     #Export as a subcatchment-geometry .gpkg
     dst = f"{analysisDirectory}/MannKendallRegression_{str(timeRange[0])}{str(timeRange[1])}_subcatchments.gpkg"
-    catch = gpd.read_file(f"{dataDirectory}/subcatchments.gpkg")
+    catch = gpd.read_file(f"{dataDirectory}/subcatchments_analyzed.gpkg")
     catch_cut = catch[['code_station','geometry']]
     #only keep catchments that have valid geometry
     #catch_cut2 = catch_cut[~catch_cut.geometry.isnull()]
@@ -466,22 +501,37 @@ if runModule4 is True:
     print("Generate fancy maps")
     
     #For the trend on the flow mean
-    src = f"{analysisDirectory}/MannKendallRegression_{str(timeRange[0])}{str(timeRange[1])}_subcatchments.gpkg"
+    srcPolygData = f"{analysisDirectory}/MannKendallRegression_{str(timeRange[0])}{str(timeRange[1])}_subcatchments.gpkg"
+    srcPoints = f"{dataDirectory}/stations_locations.gpkg"
+    srcPolygNodata = f"{dataDirectory}/subcatchments_all.gpkg"
     dst = f"{analysisDirectory}/MannKendallRegression_{str(timeRange[0])}{str(timeRange[1])}_GlobalTrendOfMean_map.png"
     polyg = 'globalTrend_mean'
     label = 'confidence_mean'
     title = f"Gobal trend of Mean Monthly Flows (colors) and their confidence level (labels) over the period {str(timeRange[0])}-{str(timeRange[1])}"
-    hydrofunc.make_map(src,polyg,label,title,dst)
-    del src, polyg, label, title, dst
+    hydrofunc.make_map(srcPolygData,polyg,label,srcPoints,srcPolygNodata,title,dst)
+    del srcPolygData, polyg, label, title, dst, srcPoints, srcPolygNodata
     
     #For the trend on the flow deviation
-    src = f"{analysisDirectory}/MannKendallRegression_{str(timeRange[0])}{str(timeRange[1])}_subcatchments.gpkg"
+    srcPolygData = f"{analysisDirectory}/MannKendallRegression_{str(timeRange[0])}{str(timeRange[1])}_subcatchments.gpkg"
+    srcPoints = f"{dataDirectory}/stations_locations.gpkg"
+    srcPolygNodata = f"{dataDirectory}/subcatchments_all.gpkg"
     dst = f"{analysisDirectory}/MannKendallRegression_{str(timeRange[0])}{str(timeRange[1])}_GlobalTrendOfDeviation_map.png"
     polyg = 'globalTrend_std'
     label = 'confidence_std'
     title = f"Global trend of Monthly Flow Deviations (colors) and their confidence level (labels) over the period {str(timeRange[0])}-{str(timeRange[1])}"
-    hydrofunc.make_map(src,polyg,label,title,dst)
-    del src, polyg, label, title, dst
+    hydrofunc.make_map(srcPolygData,polyg,label,srcPoints,srcPolygNodata,title,dst)
+    del srcPolygData, polyg, label, title, dst, srcPoints, srcPolygNodata
+
+    #For the average annual flow deviation
+    srcPolygData = f"{analysisDirectory}/stations_observations_mmf_average_{str(timeRange[0])}{str(timeRange[1])}_subcatchments.gpkg"
+    srcPoints = f"{dataDirectory}/stations_locations.gpkg"
+    srcPolygNodata = f"{dataDirectory}/subcatchments_all.gpkg"
+    dst = f"{analysisDirectory}/MeanAnnualCoefficientofVariation_{str(timeRange[0])}{str(timeRange[1])}_map.png"
+    polyg = f"MeanAnnualCoV_{timeRange[0]}{timeRange[1]}"
+    label = f"MeanAnnualCoV_{timeRange[0]}{timeRange[1]}"
+    title = f"Annual Coefficient of Variation over the period {str(timeRange[0])}-{str(timeRange[1])}"
+    hydrofunc.make_map(srcPolygData,polyg,label,srcPoints,srcPolygNodata,title,dst)
+    del srcPolygData, polyg, label, title, dst, srcPoints, srcPolygNodata
     
     print("Flush temporary files from disk if required")
     
