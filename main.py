@@ -23,14 +23,14 @@ AoI_EPSG = 4326 #ESPG code in which AoI_filePath is projected [int] e.g. 4326 #W
 timeRange = [2000,2020] #e.g. [2000,2020] for Water Balance Model (Wisser et al, 2010) as used in Rockstrom et al, 2023 
 
 #Modules to run
-runModule0 = False #True if Module 0 needs to be ran ; False if not
-runModule1 = False 
-runModule2 = False
-runModule3 = False
+runModule0 = True #True if Module 0 needs to be ran ; False if not
+runModule1 = True 
+runModule2 = True
+runModule3 = True
 runModule4 = True
 
 #Miscellaneous
-flushAllDirectories = False # Usefull to study a new AoI
+flushAllDirectories = True # Usefull to study a new AoI
 operationStatus = False #True will keep only those stations that are still operating now a days; False will keep them all 
 plottingMMF = False #True will generate the scatter plot with deviation bars of MMF for each station; False will not generate plot 
 plottingMKtest = True #true will generate the scatter plot of the series and the trend of Mann-Kendall regression ; False will not generate plot
@@ -123,7 +123,7 @@ if runModule0 is True:
     
     print("Retrieve Mean Daily Flows from hubeau.eaufrance.fr")
     
-    src = f"{dataDirectory}/stations_locations.gpkg"
+    src = f"{dataDirectory}/stations_locations_{str(timeRange[0])}{str(timeRange[1])}.gpkg"
     dst = f"{dataDirectory}/stations_observations_mdf_{str(timeRange[0])}{str(timeRange[1])}.gpkg"
     period = [f"{timeRange[0]}-01-01",f"{timeRange[1]}-01-01"] #["yyyy-mm-dd","yyyy-mm-dd"]
     hydrofunc.requestFrontend_observations_hubeau(src,dst,tRange=period)
@@ -201,12 +201,12 @@ if runModule1 is True:
     print("Generate subcatchments of all stations retrieved")
 
     #Join analyzed stations to acculfux
-    gdf = gpd.read_file(f"{dataDirectory}/stations_locations.gpkg")
+    gdf = gpd.read_file(f"{dataDirectory}/stations_locations_NoTimeRangeConstraint.gpkg")
     ids = np.arange(1,len(gdf)+1,1)
-    gdf.loc[:,'id'] = list(ids)
-    gdf.to_file(f"{dataDirectory}/stations_locations.gpkg")
-    points = f"{dataDirectory}/stations_locations.gpkg"
-    layer = 'id'
+    gdf.loc[:,'id_station'] = list(ids)
+    gdf.to_file(f"{dataDirectory}/stations_locations_NoTimeRangeConstraint.gpkg")
+    points = f"{dataDirectory}/stations_locations_NoTimeRangeConstraint.gpkg"
+    layer = 'id_station'
     acc = f"{tmpDirectory}/accuflux_geq{str(accThreshold)}.tif"
     dst = f"{tmpDirectory}/stations2accuflux_all.gpkg"
     hydrofunc.join_points_to_pixels(points,layer,acc,AoI_EPSG,dst)
@@ -224,11 +224,11 @@ if runModule1 is True:
     hydrofunc.raster_to_polygons(src,dst,AoI_EPSG,'catchment_id',zRestriction=None)
     del src, dst
     #Add station codes as catchments ids
-    stations = gpd.read_file(f"{dataDirectory}/stations_locations.gpkg")
+    stations = gpd.read_file(f"{dataDirectory}/stations_locations_NoTimeRangeConstraint.gpkg")
     catchments = gpd.read_file(f"{dataDirectory}/subcatchments_all.gpkg")
-    stations = stations[['id','code_station']]
-    m = catchments.merge(stations, left_on='catch_id', right_on='id', how='left')
-    m.drop(['catch_id','id'],axis=1,inplace=True)
+    stations = stations[['id_station','code_station']]
+    m = catchments.merge(stations, left_on='catch_id', right_on='id_station', how='left')
+    m.drop(['catch_id','id_station'],axis=1,inplace=True)
     m.to_file(f"{dataDirectory}/subcatchments_all.gpkg")
     del m
 
@@ -375,7 +375,7 @@ if runModule2 is True:
     
     #Export as a point-geometry .gpkg
     dst = f"{analysisDirectory}/MannKendallRegression_{str(timeRange[0])}{str(timeRange[1])}_points.gpkg"
-    points = gpd.read_file(f"{dataDirectory}/stations_locations.gpkg")
+    points = gpd.read_file(f"{dataDirectory}/stations_locations_{str(timeRange[0])}{str(timeRange[1])}.gpkg")
     points_cut = points[['code_station','geometry']]
     #only keep points that have valid geometry
     #points_cut2 = points_cut[~points_cut.geometry.isnull()]
@@ -411,10 +411,10 @@ if runModule3 is True:
     #Join analyzed stations to acculfux
     gdf = gpd.read_file(f"{analysisDirectory}/stations_observations_mmf_average_{str(timeRange[0])}{str(timeRange[1])}_points.gpkg")
     ids = np.arange(1,len(gdf)+1,1)
-    gdf.loc[:,'id'] = list(ids)
+    gdf.loc[:,'id_station'] = list(ids)
     gdf.to_file(f"{analysisDirectory}/stations_observations_mmf_average_{str(timeRange[0])}{str(timeRange[1])}_points.gpkg")
     points = f"{analysisDirectory}/stations_observations_mmf_average_{str(timeRange[0])}{str(timeRange[1])}_points.gpkg"
-    layer = 'id'
+    layer = 'id_station'
     acc = f"{tmpDirectory}/accuflux_geq{str(accThreshold)}.tif"
     dst = f"{tmpDirectory}/stations2accuflux_analyzed.gpkg"
     hydrofunc.join_points_to_pixels(points,layer,acc,AoI_EPSG,dst)
@@ -434,9 +434,9 @@ if runModule3 is True:
     #Add station codes as catchments ids
     stations = gpd.read_file(f"{analysisDirectory}/stations_observations_mmf_average_{str(timeRange[0])}{str(timeRange[1])}_points.gpkg")
     catchments = gpd.read_file(f"{dataDirectory}/subcatchments_analyzed.gpkg")
-    stations = stations[['id','code_station']]
-    m = catchments.merge(stations, left_on='catch_id', right_on='id', how='left')
-    m.drop(['catch_id','id'],axis=1,inplace=True)
+    stations = stations[['id_station','code_station']]
+    m = catchments.merge(stations, left_on='catch_id', right_on='id_station', how='left')
+    m.drop(['catch_id','id_station'],axis=1,inplace=True)
     m.to_file(f"{dataDirectory}/subcatchments_analyzed.gpkg")
     del m
     
@@ -502,35 +502,35 @@ if runModule4 is True:
     
     #For the trend on the flow mean
     srcPolygData = f"{analysisDirectory}/MannKendallRegression_{str(timeRange[0])}{str(timeRange[1])}_subcatchments.gpkg"
-    srcPoints = f"{dataDirectory}/stations_locations.gpkg"
+    srcPoints = f"{dataDirectory}/stations_locations_NoTimeRangeConstraint.gpkg"
     srcPolygNodata = f"{dataDirectory}/subcatchments_all.gpkg"
     dst = f"{analysisDirectory}/MannKendallRegression_{str(timeRange[0])}{str(timeRange[1])}_GlobalTrendOfMean_map.png"
     polyg = 'globalTrend_mean'
     label = 'confidence_mean'
     title = f"Gobal trend of Mean Monthly Flows (colors) and their confidence level (labels) over the period {str(timeRange[0])}-{str(timeRange[1])}"
-    hydrofunc.make_map(srcPolygData,polyg,label,srcPoints,srcPolygNodata,title,dst)
+    hydrofunc.make_map_LabelsOnPolygons(srcPolygData,polyg,label,srcPoints,srcPolygNodata,title,dst)
     del srcPolygData, polyg, label, title, dst, srcPoints, srcPolygNodata
     
     #For the trend on the flow deviation
     srcPolygData = f"{analysisDirectory}/MannKendallRegression_{str(timeRange[0])}{str(timeRange[1])}_subcatchments.gpkg"
-    srcPoints = f"{dataDirectory}/stations_locations.gpkg"
+    srcPoints = f"{dataDirectory}/stations_locations_NoTimeRangeConstraint.gpkg"
     srcPolygNodata = f"{dataDirectory}/subcatchments_all.gpkg"
     dst = f"{analysisDirectory}/MannKendallRegression_{str(timeRange[0])}{str(timeRange[1])}_GlobalTrendOfDeviation_map.png"
     polyg = 'globalTrend_std'
     label = 'confidence_std'
     title = f"Global trend of Monthly Flow Deviations (colors) and their confidence level (labels) over the period {str(timeRange[0])}-{str(timeRange[1])}"
-    hydrofunc.make_map(srcPolygData,polyg,label,srcPoints,srcPolygNodata,title,dst)
+    hydrofunc.make_map_LabelsOnPolygons(srcPolygData,polyg,label,srcPoints,srcPolygNodata,title,dst)
     del srcPolygData, polyg, label, title, dst, srcPoints, srcPolygNodata
 
     #For the average annual flow deviation
     srcPolygData = f"{analysisDirectory}/stations_observations_mmf_average_{str(timeRange[0])}{str(timeRange[1])}_subcatchments.gpkg"
-    srcPoints = f"{dataDirectory}/stations_locations.gpkg"
+    srcPoints = f"{analysisDirectory}/stations_observations_mmf_average_{str(timeRange[0])}{str(timeRange[1])}_points.gpkg"
     srcPolygNodata = f"{dataDirectory}/subcatchments_all.gpkg"
     dst = f"{analysisDirectory}/MeanAnnualCoefficientofVariation_{str(timeRange[0])}{str(timeRange[1])}_map.png"
     polyg = f"MeanAnnualCoV_{timeRange[0]}{timeRange[1]}"
     label = f"MeanAnnualCoV_{timeRange[0]}{timeRange[1]}"
     title = f"Annual Coefficient of Variation over the period {str(timeRange[0])}-{str(timeRange[1])}"
-    hydrofunc.make_map(srcPolygData,polyg,label,srcPoints,srcPolygNodata,title,dst)
+    hydrofunc.make_map_LabelsOnPoints(srcPolygData,polyg,label,srcPoints,srcPolygNodata,title,dst)
     del srcPolygData, polyg, label, title, dst, srcPoints, srcPolygNodata
     
     print("Flush temporary files from disk if required")

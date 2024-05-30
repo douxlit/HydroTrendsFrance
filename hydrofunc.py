@@ -100,6 +100,9 @@ def request_locations_hubeau(bbox,dstFile,operating,tRange=None):
     gdf_stations1.drop_duplicates(subset='code_station',inplace=True)
     gdf_stations1.reset_index(drop=True,inplace=True)
 
+    #Export dataframe without filtering timeRange to keep all stations matching the AoI
+    gdf_stations1.to_file(f"{dstFile[:-5]}_NoTimeRangeConstraint.gpkg")
+
     #Filter dataframe according to the value of operating parameter and set integer index
     if operating is True:
         m = gdf_stations1['date_fermeture_station'].isnull()
@@ -156,7 +159,7 @@ def request_locations_hubeau(bbox,dstFile,operating,tRange=None):
         gdf_stations3 = gdf_stations1.copy()
     
     #Write dataframe to disk as .gpkg
-    gdf_stations3.to_file(dstFile)
+    gdf_stations3.to_file(f"{dstFile[:-5]}_{str(tRange[0])}{str(tRange[1])}.gpkg")
 
     return
 
@@ -413,16 +416,16 @@ def compute_MeanMonthlyFlow_average(stationCode,stationsLayer,dstLayer,period,ge
         mu_Y = []
         sigma_Y = []
         
-        for i in range(12):
+        for i in range(1,13):
 
-            if (i+1) <= 9:
+            if i <= 9:
                 dfc_cut2 = dfc_cut.loc[dfc_cut['date_obs_elab'].str.contains(f"-0{str(i)}-")]
             else:
                 dfc_cut2 = dfc_cut.loc[dfc_cut['date_obs_elab'].str.contains(f"-{str(i)}-")]
 
             if dfc_cut2.empty is not True:
-                mu = dfc_cut2['resultat_obs_elab'].mean()
-                sigma = dfc_cut2['resultat_obs_elab'].std(ddof=1)
+                mu = dfc_cut2['resultat_obs_elab'].mean(skipna=True)
+                sigma = dfc_cut2['resultat_obs_elab'].std(skipna=True,ddof=1)
             else:
                 mu = np.nan
                 sigma = np.nan
@@ -842,7 +845,7 @@ def MannKendallStat(stationCode,srcFile,datesLayerName,valuesLayerName,statistic
 
 
 
-def make_map(srcLayerPolygons,layerNameForPolygons,layerNameForLabels,srcLayerPoints,srcLayerPolygonsNaN,plotTitle,dstFile):
+def make_map_LabelsOnPoints(srcLayerPolygons,layerNameForPolygons,layerNameForLabels,srcLayerPoints,srcLayerPolygonsNaN,plotTitle,dstFile):
 
     """
     Makes a map plot to render a geodataframe of polygons. Originally designed to plot results of the Mann-Kendall test. 
@@ -866,27 +869,126 @@ def make_map(srcLayerPolygons,layerNameForPolygons,layerNameForLabels,srcLayerPo
 
     # Plot
     fig, ax = plt.subplots(1, 1, figsize=(10, 8))
-
-    # Plot the polygons without data
-    #gdf_catchNaN = gpd.read_file(srcLayerPolygonsNaN)
-    #gdf_catchNaN = gdf_catchNaN[~gdf_catchNaN.geometry.isnull()]
-    #gdf_catchNaN.to_crs(3857,inplace=True) #To match contextily default crs for better rendering
-    #gdf_catchNaN.plot(ax=ax, color='lightgrey',alpha=0.7,edgecolor=(0, 0, 0, 0.5), linewidth=0.5)
     
     # Plot the polygons with data
     gdf = gpd.read_file(srcLayerPolygons)
     gdf = gdf[~gdf.geometry.isnull()]
     gdf.to_crs(3857,inplace=True) #To match contextily default crs for better rendering
-    gdf.plot(column=layerNameForPolygons, ax=ax, legend=True, cmap='viridis', alpha=0.7, edgecolor=(0, 0, 0, 0.5), linewidth=0.5)
+    gdf.plot(column=layerNameForPolygons, ax=ax, legend=True, cmap='viridis', alpha=0.7, edgecolor=(0, 0, 0, 0.5), linewidth=0.7)
+
+    # Plot the polygons without data
+    #list_NoNaN_stations = list(set(gdf['code_station']))
+    gdf_catchAll = gpd.read_file(srcLayerPolygonsNaN)
+    #gdf_catchNaN = gdf_catchAll.loc[~gdf_catchAll['code_station'].isin(list_NoNaN_stations)]
+    #gdf_catchNaN = gdf_catchNaN.loc[~gdf_catchNaN.geometry.isnull()]
+    gdf_catchAll = gdf_catchAll.loc[~gdf_catchAll.geometry.isnull()]
+    gdf_catchAll.to_crs(3857,inplace=True) #To match contextily default crs for better rendering
+    gdf_catchAll.plot(ax=ax, facecolor='none',edgecolor='red', linestyle='--', linewidth=0.7)
+    #gdf_catchNaN.plot(ax=ax,edgecolor=(0, 0, 0, 0.5), linewidth=0.5)
+
+    # Plot the points
+    gdf_points = gpd.read_file(srcLayerPoints)
+    gdf_points = gdf_points[~gdf_points.geometry.isnull()]
+    gdf_points.to_crs(3857,inplace=True)
+    gdf_points.plot(ax=ax,marker='o', markersize=5,color='black')
+
+    #Add labels
+    gdf_points[f"{layerNameForLabels}_round"] = gdf_points[layerNameForLabels].round(2)
+    for x, y, label in zip(gdf_points.geometry.x, gdf_points.geometry.y, gdf_points[f"{layerNameForLabels}_round"]):
+        ax.text(x, y, label, fontsize=9, ha='right')
+    
+    
+    # Add labels using the 'name' column
+    ##Round values to 2-decimal precision
+    #gdf[f"{layerNameForLabels}_round"] = gdf[layerNameForLabels].round(2)
+    ##Plot
+    #for idx, row in gdf.iterrows():
+        # Get the centroid of the polygon
+        #centroid = row['geometry'].centroid
+        # Ensure the centroid is within the polygon, otherwise find a better point
+        #if not row['geometry'].contains(centroid):
+        #centroid = row['geometry'].representative_point()
+        # Place the label at the centroid or representative point
+        #ax.text(centroid.x, centroid.y, row[f"{layerNameForLabels}_round"], fontsize=10, ha='center', va='center', color='black')
+    
+    # Add a title and labels (optional)
+    ax.set_title(plotTitle, pad=5, fontsize=10)
+    ax.set_xlabel('Longitude')
+    ax.set_ylabel('Latitude')
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.95)
+
+    #Add legend
+    #label_legend = Line2D([0], [0], marker='o', color='w', label='confidence_level',
+    #                  markerfacecolor='black', markersize=8)
+    #ax.legend(handles=[label_legend], loc='upper left', title='Legend')
+
+    #Add a base map
+    ctx.add_basemap(ax, source=ctx.providers.OpenStreetMap.France,alpha=0.7,crs=gdf.crs.to_string())
+    
+    # Save the figure as a PNG file
+    plt.savefig(dstFile, dpi=300)
+    
+    # Display the plot (optional)
+    #plt.show()
+    plt.close()
+
+    return
+
+
+def make_map_LabelsOnPolygons(srcLayerPolygons,layerNameForPolygons,layerNameForLabels,srcLayerPoints,srcLayerPolygonsNaN,plotTitle,dstFile):
+
+    """
+    Makes a map plot to render a geodataframe of polygons. Originally designed to plot results of the Mann-Kendall test. 
+
+    srcLayerPolygons: /path/to/vector/layer.gpkg [string] For catchments with data #Must be a ploygon-geometry geodataframe with geometry column name = 'geometry'
+    srcLayerPoints: /path/to/vector/layer.gpkg [string] For outlets #Must be a point-geometry geodataframe with geometry column name = 'geometry'
+    srcLayerPolygonsNaN: /path/to/vector/layer.gpkg [string] For catchments with no data #Must be a ploygon-geometry geodataframe with geometry column name = 'geometry'
+    layerNameForPolygons: name of the column from which to extract data that will be plotted as polygons [string]
+    layerNameForLabels: name of the column from which to extract data that will be plotted as text labels overlapping polygons [string]
+    plotTitle: title to give to the plot [string]
+    dstFile: /path/to/destination/image.png [string]
+    
+    output: map with format .png
+    """
+
+    import geopandas as gpd
+    import matplotlib.pyplot as plt
+    from shapely.geometry import Point
+    from matplotlib.lines import Line2D
+    import contextily as ctx
+
+    # Plot
+    fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+    
+    # Plot the polygons with data
+    gdf = gpd.read_file(srcLayerPolygons)
+    gdf = gdf[~gdf.geometry.isnull()]
+    gdf.to_crs(3857,inplace=True) #To match contextily default crs for better rendering
+    gdf.plot(column=layerNameForPolygons, ax=ax, legend=True, cmap='viridis', alpha=0.7, edgecolor=(0, 0, 0, 0.5), linewidth=0.7)
+
+    # Plot the polygons without data
+    #list_NoNaN_stations = list(set(gdf['code_station']))
+    gdf_catchAll = gpd.read_file(srcLayerPolygonsNaN)
+    #gdf_catchNaN = gdf_catchAll.loc[~gdf_catchAll['code_station'].isin(list_NoNaN_stations)]
+    #gdf_catchNaN = gdf_catchNaN.loc[~gdf_catchNaN.geometry.isnull()]
+    gdf_catchAll = gdf_catchAll.loc[~gdf_catchAll.geometry.isnull()]
+    gdf_catchAll.to_crs(3857,inplace=True) #To match contextily default crs for better rendering
+    gdf_catchAll.plot(ax=ax, facecolor='none',edgecolor='red', linestyle='--', linewidth=0.7)
+    #gdf_catchNaN.plot(ax=ax,edgecolor=(0, 0, 0, 0.5), linewidth=0.5)
 
     # Plot the points
     #gdf_points = gpd.read_file(srcLayerPoints)
     #gdf_points = gdf_points[~gdf_points.geometry.isnull()]
     #gdf_points.to_crs(3857,inplace=True)
-    #gdf_points.plot(ax=ax)
+    #gdf_points.plot(ax=ax,marker='o', markersize=5,color='black')
+
+    #Add labels
+    #for x, y, label in zip(gdf_points.geometry.x, gdf_points.geometry.y, gdf_points[layerNameForLabels]):
+    #    ax.text(x, y, label, fontsize=9, ha='right')
     
     
-    # Add labels using the 'name' column
+    #Add labels using the 'name' column
     ##Round values to 2-decimal precision
     gdf[f"{layerNameForLabels}_round"] = gdf[layerNameForLabels].round(2)
     ##Plot
@@ -1688,6 +1790,41 @@ def cells_to_points(dictCells,epsgCode,*dstFile):
     return gdf
 
 
+def sjoin_nearest_unique(left_df, right_df, left_suffix, right_suffix):
+
+    """
+    Designed to prevent sjoin_nearest() function of geopandas to join several entities in left_df to one entity in right_df.
+    The result is a geodataframe where each point in left_df is matched to a unique nearest point in right_df without losing any entities. 
+    """
+
+    import geopandas as gpd
+    
+    # Copy of the right_df to keep track of available points
+    available_right_df = right_df.copy()
+    
+    # List to store the result
+    result = []
+
+    for left_point in left_df.itertuples():
+        # Find the nearest available right point
+        distances = available_right_df.geometry.apply(lambda x: left_point.geometry.distance(x))
+        nearest_index = distances.idxmin()
+        
+        # Append the left point and its nearest right point to the result
+        result.append((left_point.Index, nearest_index))
+        
+        # Remove the assigned right point from the available points
+        available_right_df = available_right_df.drop(index=nearest_index)
+        
+    # Create a DataFrame from the result
+    result_df = gpd.GeoDataFrame(result, columns=['left_index', 'right_index'])
+    
+    # Merge the left and right GeoDataFrames on their indices
+    merged_df = left_df.merge(result_df, left_index=True, right_on='left_index')
+    merged_df = merged_df.merge(right_df, left_on='right_index', right_index=True, suffixes=(f"_{left_suffix}", f"_{right_suffix}"))
+    
+    return merged_df
+
 
 def join_points_to_pixels(pointsFile,pointsLayer,rasterFile,epsgCode,dstFile):
     
@@ -1705,40 +1842,64 @@ def join_points_to_pixels(pointsFile,pointsLayer,rasterFile,epsgCode,dstFile):
     """
     
     import geopandas as gpd
+    import pandas as pd
     from shapely import wkt
+    import numpy as np
     
     #Convert rasterFile to geoDataFrame and create a 'uid' column
     raster = extract_cellsValues(rasterFile)
     gdf_raster = cells_to_points(raster,epsgCode)
     uids  = [i for i in range(len(gdf_raster))]
-    gdf_raster['uid'] = uids
+    gdf_raster.loc[:,'id_pixel'] = uids
     
     #Exclude NaN values from gdf_raster
-    gdf_raster_noNaN = gdf_raster.dropna(axis=0,subset='values')
+    gdf_raster.dropna(axis=0,subset='values',inplace=True)
     
     #Open pointsFile and cut dataframe to only the following columns ['pointsLayer','geometry','code_station'] 
     points = gpd.read_file(pointsFile)
     gdf_points = points[[f"{str(pointsLayer)}",'geometry','code_station']]
+    uids = [i for i in range(len(gdf_points))]
+    gdf_points.loc[:,'id_point'] = uids
+
+    #Greedy spatial join 
     
-    #Spatial joining and merging
-    join = gpd.sjoin_nearest(gdf_points,gdf_raster_noNaN,how='left',lsuffix='points', rsuffix='raster')
+    distance_matrix = gdf_points.geometry.apply(lambda g: gdf_raster.distance(g))
+
+    frames = {'id_point': [],
+             'id_pixel': []}
+
+    for row in range(len(distance_matrix)):
+
+        min_col = distance_matrix.loc[row].idxmin()
+        frames['id_pixel'].append(str(min_col))
+        frames['id_point'].append(str(row))
+        distance_matrix.drop(min_col,axis=1,inplace=True)
+
+    join = pd.DataFrame(frames)
+    join_ids = [i for i in range(len(join))]
+    join.loc[:,'id_join'] = join_ids
+                                           
+    #Retrieve attributes of each former df
+    gdf_raster_geom = gdf_raster[['geometry','id_pixel']]
+    join['id_pixel'] = join['id_pixel'].astype("string")
+    gdf_raster_geom['id_pixel'] = gdf_raster_geom['id_pixel'].astype("string")
+    merge_raster = join.merge(gdf_raster_geom,left_on='id_pixel',right_on='id_pixel',how='left')
+
+    gdf_points_nogeom = gdf_points[[f"{str(pointsLayer)}",'code_station','id_point']]
+    join['id_point'] = join['id_point'].astype("string")
+    gdf_points_nogeom['id_point'] = gdf_points_nogeom['id_point'].astype("string")
+    merge_points = join.merge(gdf_points_nogeom,left_on='id_point',right_on='id_point',how='left')
+
+    merge_final = merge_raster.merge(merge_points,left_on='id_join',right_on='id_join',how='left')
     
-    #Retrieve the coordinates of cooresponding pixels in rasterFile
-    gdf_raster_geom = gdf_raster[['geometry','uid']]
-    merge = join.merge(gdf_raster_geom,left_on='uid',right_on='uid',how='left',suffixes=('_points', '_raster'))
-    
-    #Convert above dataframe to geodataframe based on raster geometry
-    merge['station_coordinates'] = merge['geometry_points'] 
-    merge['station_coordinates'] = merge['station_coordinates'].astype("string")
-    merge.drop(['geometry_points'], axis=1, inplace=True)
-    merge['geometry'] = merge['geometry_raster']
-    merge.drop('geometry_raster', axis=1, inplace=True)
-    gdf = gpd.GeoDataFrame(merge, crs=f"EPSG:{str(epsgCode)}", geometry='geometry')
+    #Build geodataframe
+    gdf = gpd.GeoDataFrame(merge_final, crs=f"EPSG:{str(epsgCode)}", geometry='geometry')
     
     #Write gdf to disk
     gdf.to_file(dstFile)  
     
     return gdf
+
 
 
 def convert_to_geotiff(srcFile,dstFile,epsgCode):
