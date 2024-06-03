@@ -15,7 +15,7 @@ from shapely import wkt
 ##################
 
 #Area of Interest
-AoI_filePath = "envelope_4326.gpkg" #path to file with extension
+AoI_filePath = "emprise_sudloire.gpkg" #path to file with extension
 AoI_fileIsRaster = False #False if AoI is a vector file (.shp, .gpkg...); True if AoI is a raster file (.tif...)
 AoI_EPSG = 4326 #ESPG code in which AoI_filePath is projected [int] e.g. 4326 #WARNING: !!has been developped with EPSG:4326 only, hence may not work with other EPSGs at this stage!!
 
@@ -23,14 +23,15 @@ AoI_EPSG = 4326 #ESPG code in which AoI_filePath is projected [int] e.g. 4326 #W
 timeRange = [2000,2020] #e.g. [2000,2020] for Water Balance Model (Wisser et al, 2010) as used in Rockstrom et al, 2023 
 
 #Modules to run
-runModule0 = True #True if Module 0 needs to be ran ; False if not
-runModule1 = True 
-runModule2 = True
-runModule3 = True
-runModule4 = True
+runModule0 = False #True if Module 0 needs to be ran ; False if not
+runModule1 = False 
+runModule2 = False
+runModule3 = False
+runModule4 = False
+runModule5 = True
 
 #Miscellaneous
-flushAllDirectories = True # Usefull to study a new AoI
+flushAllDirectories = False # Usefull to study a new AoI
 operationStatus = False #True will keep only those stations that are still operating now a days; False will keep them all 
 plottingMMF = False #True will generate the scatter plot with deviation bars of MMF for each station; False will not generate plot 
 plottingMKtest = True #true will generate the scatter plot of the series and the trend of Mann-Kendall regression ; False will not generate plot
@@ -524,7 +525,15 @@ if runModule4 is True:
 
     #For the average annual flow deviation
     srcPolygData = f"{analysisDirectory}/stations_observations_mmf_average_{str(timeRange[0])}{str(timeRange[1])}_subcatchments.gpkg"
-    srcPoints = f"{analysisDirectory}/stations_observations_mmf_average_{str(timeRange[0])}{str(timeRange[1])}_points.gpkg"
+    ##Prepare pointsLayer to display: retrieve position of stations in accuflux map
+    points2accuflux = gpd.read_file(f"{tmpDirectory}/stations2accuflux_analyzed.gpkg")
+    points = gpd.read_file(f"{analysisDirectory}/stations_observations_mmf_average_{str(timeRange[0])}{str(timeRange[1])}_points.gpkg")
+    points2accuflux_cut = points2accuflux[['code_station','geometry']]
+    points_cut = points.drop('geometry',axis=1)
+    m = points2accuflux_cut.merge(points_cut,left_on='code_station',right_on='code_station',how='left')
+    m.to_file(f"{analysisDirectory}/stations2accuflux_observations_mmf_average_{str(timeRange[0])}{str(timeRange[1])}_points.gpkg")
+    ##Plot
+    srcPoints = f"{analysisDirectory}/stations2accuflux_observations_mmf_average_{str(timeRange[0])}{str(timeRange[1])}_points.gpkg"
     srcPolygNodata = f"{dataDirectory}/subcatchments_all.gpkg"
     dst = f"{analysisDirectory}/MeanAnnualCoefficientofVariation_{str(timeRange[0])}{str(timeRange[1])}_map.png"
     polyg = f"MeanAnnualCoV_{timeRange[0]}{timeRange[1]}"
@@ -550,4 +559,69 @@ if runModule4 is True:
 
 else:
     pass
+
+
+
+##############################
+# Module 5: Spatial Analysis #
+##############################
+
+if runModule5 is True:
+
+    globstart = datetime.datetime.now()
+
+    print("Module 5")
+
+    print("Get the spatial extent of the AoI")
+    
+    if AoI_fileIsRaster is True:
+        AoI_bbox = hydrofunc.extract_Rasterbbox(AoI_filePath)
+    else:
+        AoI_bbox = hydrofunc.extract_Vectorbbox(AoI_filePath)
+    
+    print("Download OSM spatial features")
+
+    #See: https://wiki.openstreetmap.org/wiki/Map_features
+    #Wastewater plants
+    dst = f"{dataDirectory}/wasterwater_plants.gpkg"
+    feat = {'man_made':'wastewater_plant'}
+    hydrofunc.request_osm_feature(AoI_bbox,AoI_EPSG,feat,dst)
+    del dst, feat
+    #Dams
+    dst = f"{dataDirectory}/dams.gpkg"
+    feat = {'waterway':'dam'}
+    hydrofunc.request_osm_feature(AoI_bbox,AoI_EPSG,feat,dst)
+    del dst, feat
+    #Weirs
+    dst = f"{dataDirectory}/weirs.gpkg"
+    feat = {'waterway':'weir'}
+    hydrofunc.request_osm_feature(AoI_bbox,AoI_EPSG,feat,dst)
+    del dst, feat
+    #lock
+    dst = f"{dataDirectory}/locks.gpkg"
+    feat = {'water':'lock'}
+    hydrofunc.request_osm_feature(AoI_bbox,AoI_EPSG,feat,dst)
+    del dst, feat
+    #reservoirs
+    dst = f"{dataDirectory}/reservoirs.gpkg"
+    feat = {'water':'reservoir'}
+    hydrofunc.request_osm_feature(AoI_bbox,AoI_EPSG,feat,dst)
+    del dst, feat
+
+else:
+    pass
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

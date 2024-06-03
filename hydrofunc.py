@@ -32,6 +32,7 @@ def extract_Rasterbbox(srcFile):
     return bbox
 
 
+
 def extract_Vectorbbox(srcFile):
 
     """
@@ -48,7 +49,76 @@ def extract_Vectorbbox(srcFile):
     del gdf
 
     return bbox
+
+
+def reproject_bbox(bbox,srcEPSG,dstEPSG):
+
+    """
+    bbox: coordinates as a string "xmin ymin xmax ymax" [string]
+    srcEPSG: source ESPG corresponding to bbox parameter [int]
+    dstEPSG: destination EPSG in which to reproject bbox [int]
+
+    output : coordinates as a string "xmin ymin xmax ymax" projected in dstEPSG [string]
+    """
+
+    import pyproj
+    import shapely
+
+    transformer = Transformer.from_crs(f"EPSG:{srcEPSG}", f"EPSG:{dstEPSG}", always_xy=True)
+    lbbox = bbox.split()
+    sbbox = shapely.geometry.box(lbbox[0], lbbox[1], lbbox[2], lbbox[3])
+    tbbox = transformer.transform(sbbox.bounds[0], sbbox.bounds[1], sbbox.bounds[2], sbbox.bounds[3])
+
+    dstbbox = ' '.join(str(coord) for coord in tbbox)
+
+    return dstbbox
     
+
+def request_osm_feature(bbox,bboxEPSG,tags,dstFile):
+
+    """
+    This function uses osmnx library to request an OSM feature based on the parameter tag and over a specified AoI.
+
+    bbox: coordinates as a string "xmin ymin xmax ymax" to define the request's spatial extent [string]
+    tags: dictionary containing the key and its feature to be requested [Python's dict] Format is: {'key':'feature'} with only one key and one feature at a time.
+    dstFile: /path/to/destination/layer.gpkg containing the geoDataFrame with requested objects projected in bboxEPSG [string]
+    bboxEPSG: EPSG of the bbox parameter in which to project dstFile [int] Note that osmnx used EPSG:4326 to this function reprojects srcEPSG into it before request
+    """
+
+    import osmnx as ox
+    import geopandas as gpd
+    
+    #Reproject bbox if needed
+    if bboxEPSG != 4326:
+        newbbox = reproject_bbox(bbox,bboxEPSG,4326)
+    else:
+        newbbox = bbox
+
+    #Request 
+    lbbox = newbbox.split()
+    fbbox = [float(coord) for coord in lbbox]
+    print(fbbox)
+    obbox = [fbbox[3],fbbox[1],fbbox[2],fbbox[0]]
+    print(obbox)
+    tbbox = tuple(obbox)
+    print(tbbox)
+    gdf = ox.features.features_from_bbox(bbox=tbbox, tags=tags)
+    #gdf = ox.features.features_from_bbox(north=fbbox[3],nort=fbbox[1],fbbox[2],fbbox[0],tags)
+    gdf.set_crs(epsg=4326, inplace=True)
+
+    #Reproject gdf if needed 
+    if bboxEPSG != 4326:
+        res = gdf.to_crs(f"EPSG:{str(bboxEPSG)}")
+    else:
+        res = gdf.copy()
+
+    #Write to disk as dstFile
+    #res.to_file(dstFile)
+
+    return res
+    
+        
+
 
 
 def request_locations_hubeau(bbox,dstFile,operating,tRange=None):
