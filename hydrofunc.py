@@ -51,6 +51,37 @@ def extract_Vectorbbox(srcFile):
     return bbox
 
 
+def reproject_raster(srcFile,dstFile,dstEPSG):
+
+    """
+    srcFile: path/to/source/raster/file.tif [string]
+    dstFile: path/to/destination/raster/file.tif [string]
+    dstEPSG: EPSG code to be used when reprojecting [int]
+    """
+
+    import os
+    from osgeo import gdal, osr
+    gdal.UseExceptions()
+
+    #Get the current EPSG and height/width of srcFile
+
+    src = gdal.Open(srcFile)
+    projection = src.GetProjection()
+    srs = osr.SpatialReference()
+    srs.ImportFromWkt(projection)
+    srcEPSG = srs.GetAttrValue('AUTHORITY', 1)
+    srcWIDTH = src.RasterXSize
+    srcHEIGTH = src.RasterYSize
+    src = None
+
+    #Reproject raster to dstEPSG
+    
+    cmd = f"gdalwarp -overwrite -s_srs EPSG:{str(srcEPSG)} -t_srs EPSG:{str(dstEPSG)} -r near -ts srcWIDTH srcHEIGTH -of GTiff {srcFile} {dstFile}"
+    os.system(cmd)
+    
+    return
+
+
 def reproject_bbox(bbox,srcEPSG,dstEPSG):
 
     """
@@ -106,14 +137,22 @@ def request_osm_feature(bbox,bboxEPSG,tags,dstFile):
     #gdf = ox.features.features_from_bbox(north=fbbox[3],nort=fbbox[1],fbbox[2],fbbox[0],tags)
     gdf.set_crs(epsg=4326, inplace=True)
 
+    #Keep only the geometry column and the POINT-geometry rows and the column corresponding to the feature called in 'tags' parameter
+    key = list(tags.keys())[0]
+    gdfc = gdf[['geometry',f"{str(key)}"]]
+    gdfc.loc[:,'feature'] = list(gdfc[f"{str(key)}"]) #rename "key" column with "feature"
+    gdfc.drop(f"{str(key)}",axis=1,inplace=True)
+    gdfcc = gdfc.loc[gdfc['geometry'].geom_type == 'Point'] #keep only point geometries
+    gdfcc.reset_index(inplace=True,drop=True)
+
     #Reproject gdf if needed 
     if bboxEPSG != 4326:
-        res = gdf.to_crs(f"EPSG:{str(bboxEPSG)}")
+        res = gdfcc.to_crs(f"EPSG:{str(bboxEPSG)}")
     else:
-        res = gdf.copy()
+        res = gdfcc.copy()
 
     #Write to disk as dstFile
-    #res.to_file(dstFile)
+    res.to_file(dstFile)
 
     return res
     
@@ -730,7 +769,7 @@ def MannKendallStat(stationCode,srcFile,datesLayerName,valuesLayerName,statistic
     """
 
     import numpy as np
-    import scipy.stats
+    import scipy
     import pandas as pd
     import os
     import matplotlib.pyplot as plt
@@ -843,44 +882,51 @@ def MannKendallStat(stationCode,srcFile,datesLayerName,valuesLayerName,statistic
     print("######################### 2nd Draw hypothesis test on z-value")
     #############
 
-    #Decide whether to conduct an upward or downward test depending on the sign of z
-    
-    if z <= float(0): 
-        
-        #H0: no monotonic trend ; versus H1: downward monotonic trend
-    
-        p_value = scipy.stats.norm.cdf(z)
-        #Find alpha (significance level) such that H0 is rejected over H1, i.e. alpha | p_value < alpha (alpha such that z_value is significant)
-        c = []
-        for alpha in np.arange(0.01,0.98,1/100):
-            if p_value < alpha:
-                c.append(alpha)
-            else:
-                pass
-        if len(c) != 0:
-            first = c[0]
-            confidence = 1 - first
-        else:
-            confidence = 0
+    #Conduct a two-tailed test independent on the sign of z
+    #H0: no monotonic trend ; versus H1: monotonic trend
 
+    p_value = 2 * (1 - scipy.stats.norm.cdf(abs(z)))
+
+    oneSideTest = False
+    if oneSideTest is True:
+    
+        if z <= float(0): 
+            
+            #H0: no monotonic trend ; versus H1: downward monotonic trend
+        
+            p_value = scipy.stats.norm.cdf(z)
+            #Find alpha (significance level) such that H0 is rejected over H1, i.e. alpha | p_value < alpha (alpha such that z_value is significant)
+            c = []
+            for alpha in np.arange(0.01,0.98,1/100):
+                if p_value < alpha:
+                    c.append(alpha)
+                else:
+                    pass
+            if len(c) != 0:
+                first = c[0]
+                confidence = 1 - first
+            else:
+                confidence = 0
+    
+        else:
+    
+            #H0: no monotonic trend ; versus H1: upward monotonic trend
+            
+            p_value = 1 - scipy.stats.norm.cdf(z)
+            #Find alpha (significance level) such that H0 is rejected over H1, i.e. alpha | (1-p_value) - alpha < 0 (alpha such that z_value is significant)
+            c = []
+            for alpha in np.arange(0.01,0.98,1/100):
+                if p_value < alpha:
+                    c.append(alpha)
+                else:
+                    pass
+            if len(c) != 0:
+                first = c[0]
+                confidence = 1 - first
+            else:
+                confidence = 0
     else:
-
-        #H0: no monotonic trend ; versus H1: upward monotonic trend
-        
-        p_value = 1 - scipy.stats.norm.cdf(z)
-        #Find alpha (significance level) such that H0 is rejected over H1, i.e. alpha | (1-p_value) - alpha < 0 (alpha such that z_value is significant)
-        c = []
-        for alpha in np.arange(0.01,0.98,1/100):
-            if p_value < alpha:
-                c.append(alpha)
-            else:
-                pass
-        if len(c) != 0:
-            first = c[0]
-            confidence = 1 - first
-        else:
-            confidence = 0
-
+        pass
 
     ############
     print("######################### 3rd Plot graphs if required")
@@ -893,7 +939,7 @@ def MannKendallStat(stationCode,srcFile,datesLayerName,valuesLayerName,statistic
                  [slope*x+intercept for x in range(len(values))],
                  'r--',
                  linewidth=1,
-                 label=f"Global trend ({str(np.round(delta,decimals=2)*100)}% at a {str(np.round(confidence,decimals=2)*100)}% confidence level)"
+                 label=f"Global trend ({str(np.round(delta,decimals=2)*100)}% with a p-value of {str(np.round(p_value,decimals=2))})"
                 )
         plt.xlabel('Time series')
         if statistic == "mean":
@@ -910,7 +956,7 @@ def MannKendallStat(stationCode,srcFile,datesLayerName,valuesLayerName,statistic
         pass
 
 
-    return z, slope, intercept, delta, confidence
+    return z, slope, intercept, delta, p_value
 
 
 
@@ -1782,7 +1828,79 @@ def extract_cellsValues(srcFile,*dropna):
                 frames['values'].append(np.float32(a[y,x]))
                 frames['id'].append((y,x))
     
+    r = None
+    
     return frames
+
+
+def count_tiedCells(srcFile,valuesList):
+    
+    """
+    Counts the number of pixels equal to each value in valuesList, i.e. for each tied group in the raster, the number of pixels of each group
+    srcFile: path/to/source/raster/file.tif [string]
+    valuesList: list of values that will be checked [list]
+    output : python dictionary with keys 'tiedValue', 'tiedCount' [dict]
+    """
+    
+    from osgeo import gdal
+    gdal.UseExceptions()
+    import numpy as np
+    
+    r = gdal.Open(srcFile)
+    band = r.GetRasterBand(1)
+    a = band.ReadAsArray().astype(float)
+    
+    ulx, xres, xskew, uly, yskew, yres = r.GetGeoTransform()
+    
+    h,w = a.shape
+
+    #Create empty dictionary to further store results
+    
+    frames = {'tiedValue':[],
+              'tiedCount':[]}
+    
+    for val in valuesList:
+
+        count = 0
+    
+        for y in range(h): 
+    
+            if y == 0: #yres is negative and y axis goes x-wise
+                ymax = uly 
+                ymin = uly + yres
+            else:
+                ymax = uly + y * yres #for last iteration, h = h-1 because of range() behavior
+                ymin = uly + y * yres + yres 
+            
+            for x in range(w):
+    
+                if x == 0:
+                    xmin = ulx 
+                    xmax = ulx + xres
+                else:
+                    xmin = ulx + x * xres 
+                    xmax = ulx + x * xres + xres
+    
+                if (xmin >= xmax) | (ymin >= ymax):
+                    print("Error (x,y)",(x,y))
+                else:
+                    pass
+    
+                pixel = np.float32(a[y,x])
+                if pixel == np.float32(val):
+                    count += 1
+                else:
+                    pass
+
+        
+        frames['tiedValue'].append(val)
+        frames['tiedCount'].append(count)
+        del count, val
+
+    r = None
+    
+    return frames
+
 
 
 def cells_to_points(dictCells,epsgCode,*dstFile):
@@ -1987,3 +2105,75 @@ def convert_to_geotiff(srcFile,dstFile,epsgCode):
     os.system(cmd)
 
     return
+
+
+def clip_to_shapefile(srcFile,dstFile,EPSG,maskFile):
+
+    """
+    srcFile: path/to/source/raster/file.tif [string]
+    dstFile: path/to/destination/raster/file.tif [string]
+    maskFile: path/to/mask/raster/file.gpkg or any osgeo-compatible vector format [string] WARNING if the extension is not of length 4, code needs to be modified to match the length of the actual file extension, e.g. len("shp") = 3 but len('gpkg') = 4
+    EPSG: epsg code of both src, mask and dst (must be the same) [int]
+    """
+
+    import os
+    import numpy as np
+
+    #Extract layerName from maskFile
+    a = maskFile
+    b = np.char.split(a, sep ='/') 
+    c = np.ndarray.tolist(b)
+    d = c[-1]
+    layerName = d[:-5]
+
+    #Execute gdalwarp
+    cmd = f"gdalwarp -overwrite -s_srs EPSG:{str(EPSG)} -t_srs EPSG:{str(EPSG)} -of GTiff -cutline {str(maskFile)} -cl {str(layerName)} -crop_to_cutline {str(srcFile)} {str(dstFile)}"
+    os.system(cmd)
+
+    return
+
+
+def pvalue_test(z,layersList):
+
+    #Decide whether to conduct an upward or downward test depending on the sign of z
+    
+    if z <= float(0): 
+        
+        #H0: no monotonic trend ; versus H1: downward monotonic trend
+    
+        p_value = scipy.stats.norm.cdf(z)
+        #Find alpha (significance level) such that H0 is rejected over H1, i.e. alpha | p_value < alpha (alpha such that z_value is significant)
+        c = []
+        for alpha in np.arange(0.01,0.98,1/100):
+            if p_value < alpha:
+                c.append(alpha)
+            else:
+                pass
+        if len(c) != 0:
+            first = c[0]
+            confidence = 1 - first
+        else:
+            confidence = 0
+
+    else:
+
+        #H0: no monotonic trend ; versus H1: upward monotonic trend
+        
+        p_value = 1 - scipy.stats.norm.cdf(z)
+        #Find alpha (significance level) such that H0 is rejected over H1, i.e. alpha | (1-p_value) - alpha < 0 (alpha such that z_value is significant)
+        c = []
+        for alpha in np.arange(0.01,0.98,1/100):
+            if p_value < alpha:
+                c.append(alpha)
+            else:
+                pass
+        if len(c) != 0:
+            first = c[0]
+            confidence = 1 - first
+        else:
+            confidence = 0
+
+    return
+
+
+
