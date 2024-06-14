@@ -982,7 +982,7 @@ def MannKendallStat(stationCode,srcFile,datesLayerName,valuesLayerName,statistic
                  [slope*x+intercept for x in range(len(values))],
                  'r--',
                  linewidth=1,
-                 label=f"Global trend ({str(np.round(delta,decimals=2)*100)}% with a p-value of {str(np.round(p_value,decimals=2))})"
+                 label=f"Global trend ({str(np.round(delta,decimals=2)*100)}% with a p-value of {str(np.round(p_value,decimals=4))})"
                 )
         plt.xlabel('Time series')
         if statistic == "mean":
@@ -1053,9 +1053,9 @@ def make_map_LabelsOnPoints(srcLayerPolygons,layerNameForPolygons,layerNameForLa
     gdf_points.plot(ax=ax,marker='o', markersize=5,color='black')
 
     #Add labels
-    gdf_points[f"{layerNameForLabels}_round"] = gdf_points[layerNameForLabels].round(2)
+    gdf_points[f"{layerNameForLabels}_round"] = gdf_points[layerNameForLabels].round(4)
     for x, y, label in zip(gdf_points.geometry.x, gdf_points.geometry.y, gdf_points[f"{layerNameForLabels}_round"]):
-        ax.text(x, y, label, fontsize=9, ha='right')
+        ax.text(x, y, label, fontsize=5, ha='right')
     
     
     # Add labels using the 'name' column
@@ -1151,7 +1151,7 @@ def make_map_LabelsOnPolygons(srcLayerPolygons,layerNameForPolygons,layerNameFor
     
     #Add labels using the 'name' column
     ##Round values to 2-decimal precision
-    gdf[f"{layerNameForLabels}_round"] = gdf[layerNameForLabels].round(2)
+    gdf[f"{layerNameForLabels}_round"] = gdf[layerNameForLabels].round(4)
     ##Plot
     for idx, row in gdf.iterrows():
         # Get the centroid of the polygon
@@ -1160,7 +1160,7 @@ def make_map_LabelsOnPolygons(srcLayerPolygons,layerNameForPolygons,layerNameFor
         if not row['geometry'].contains(centroid):
             centroid = row['geometry'].representative_point()
         # Place the label at the centroid or representative point
-        ax.text(centroid.x, centroid.y, row[f"{layerNameForLabels}_round"], fontsize=10, ha='center', va='center', color='black')
+        ax.text(centroid.x, centroid.y, row[f"{layerNameForLabels}_round"], fontsize=7, ha='center', va='center', color='black')
     
     # Add a title and labels (optional)
     ax.set_title(plotTitle, pad=5, fontsize=10)
