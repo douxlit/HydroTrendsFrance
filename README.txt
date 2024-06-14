@@ -66,6 +66,7 @@ It is structured in several modules:
 . one mapping the mean annual coefficient of variation for each subcatchment
 
 # MODULE 5
+- it requires these 2 additionnal files to be downloaded at https://seafile.emse.fr/d/d21e4a3c2bf74432adfc/ and placed in the same directory as main.py and hydrofunc.py
 - it performs a spatial analysis of flow deviation
 - it computes the correlation matrix betwwen land occupation, strem impoundments and flow variability (or deviation, captured through the annual coefficients of variation)
 - it outputs two figures:
