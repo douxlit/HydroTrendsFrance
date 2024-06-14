@@ -45,15 +45,15 @@ AoI_fileIsRaster = False #False if AoI is a vector file (.shp, .gpkg...); True i
 AoI_EPSG = 4326 #ESPG code in which AoI_filePath is projected [int] e.g. 4326 #WARNING: !!has been developped with EPSG:4326 only, hence may not work with other EPSGs at this stage!!
 
 #Period of Interest
-timeRange = [2000,2020] #e.g. [2000,2020] for Water Balance Model (Wisser et al, 2010) as used in Rockstrom et al, 2023 
+timeRange = [1978,2023] #e.g. [2000,2020] for Water Balance Model (Wisser et al, 2010) as used in Rockstrom et al, 2023 
 
 #Modules to run
-runModule0 = False #True if Module 0 needs to be ran ; False if not
-runModule1 = False 
-runModule2 = False
-runModule3 = False
+runModule0 = True #True if Module 0 needs to be ran ; False if not
+runModule1 = True 
+runModule2 = True
+runModule3 = True
 runModule4 = True
-runModule5 = False
+runModule5 = True
 
 #Miscellaneous
 flushAllDirectories = False # Usefull to study a new AoI
@@ -820,9 +820,9 @@ if runModule5 is True:
         listOneStation = []
         
         #Build temporary dataframe for saving columns
-        frames = {'code_station':[],'MeanAnnualCoV_20002020':[],'geometry':[]}
+        frames = {'code_station':[],f"MeanAnnualCoV_{str(timeRange[0])}{str(timeRange[1])}":[],'geometry':[]}
         frames['code_station'].append(station)
-        frames['MeanAnnualCoV_20002020'].append(list(gdc['MeanAnnualCoV_20002020'])[0])
+        frames[f"MeanAnnualCoV_{str(timeRange[0])}{str(timeRange[1])}"].append(list(gdc[f"MeanAnnualCoV_{str(timeRange[0])}{str(timeRange[1])}"])[0])
         frames['geometry'].append(list(gdc['geometry'])[0])
         tmp1 = pd.DataFrame(frames)
 
@@ -862,80 +862,85 @@ if runModule5 is True:
     src = f"{dataDirectory}/anthropogenic_features_count_by_subcatchment_structured.gpkg"
     gdf = gpd.read_file(src)
     gdf.drop(labels=['geometry','code_station'],axis=1,inplace=True)
-    #Join correlation labels to CLC nomenclature
-    src = "CLC_pixel2class_nomenclature.csv"
-    nomm = pd.read_csv(src)
-    nomm['pixelValue'] = nomm['pixelValue'].astype(float)
-    occupationClassesAll = [float(x) for x in occupationClassesAll]
-    if float(-128) in occupationClassesAll:
-        occupationClassesAll.remove(float(-128))
+    
+    if len(gdf) >= 2:
+    
+        #Join correlation labels to CLC nomenclature
+        src = "CLC_pixel2class_nomenclature.csv"
+        nomm = pd.read_csv(src)
+        nomm['pixelValue'] = nomm['pixelValue'].astype(float)
+        occupationClassesAll = [float(x) for x in occupationClassesAll]
+        if float(-128) in occupationClassesAll:
+            occupationClassesAll.remove(float(-128))
+        else:
+            pass
+        for occ in occupationClassesAll:
+            pixValue = float(occ)
+            tmp = nomm.loc[nomm['pixelValue'] == pixValue]
+            pixLabel = list(tmp['pixelLabel'])[0]
+            values = [np.round(x,decimals=2) for x in list(gdf[f"occupation_class{str(occ)}"])]
+            gdf.loc[:,f"{str(pixLabel)}"] = values
+            #Clean dataframe
+            gdf.drop(f"occupation_class{str(occ)}",axis=1,inplace=True)
+            gdf.dropna(axis=1,how='all',inplace=True)
+        #Compute correlation and significance
+        corr_frames = {}
+        pval_frames = {}
+        idx = []
+        for x in list(gdf.columns):
+            idx.append(f"{str(x)}")
+            for y in list(gdf.columns):
+                c, p = scipy.stats.pearsonr(list(gdf[f"{str(x)}"]), list(gdf[f"{str(y)}"]), alternative='two-sided')
+                if f"{str(y)}" not in corr_frames:
+                    corr_frames[f"{str(y)}"] = []
+                    corr_frames[f"{str(y)}"].append(c)
+                    pval_frames[f"{str(y)}"] = []
+                    pval_frames[f"{str(y)}"].append(p)
+                else:
+                    corr_frames[f"{str(y)}"].append(c)
+                    pval_frames[f"{str(y)}"].append(p)
+        corr = pd.DataFrame(corr_frames,index=idx)
+        pval = pd.DataFrame(pval_frames,index=idx)
+        #corr = gdf.corr(method='pearson')
+        #pval = corr.map(lambda x: np.round(scipy.stats.norm.cdf(x),decimals=2))
+        #Clean dataframe from (for some reason) empty rows
+        corr.dropna(axis=1,how='all',inplace=True)
+        corr.dropna(axis=0,how='all',inplace=True)
+        pval.dropna(axis=1,how='all',inplace=True)
+        pval.dropna(axis=0,how='all',inplace=True)
+        #Write to disk
+        dst = f"{analysisDirectory}/corrMatrix_flowDeviations_vs_anthropogenicFeatures.csv"
+        corr.to_csv(dst)
+        dst = f"{analysisDirectory}/pvalMatrix_flowDeviations_vs_anthropogenicFeatures.csv"
+        pval.to_csv(dst)
+        #plot corr as a heatmap
+        plt.figure(figsize=(10, 8))  # Adjust the size to your needs
+        mask = corr >= float(0.99)
+        sns.heatmap(corr, annot=True, fmt='.1e', cmap='vlag', center=0, annot_kws={"fontsize": 4}, mask=mask)
+        plt.title('Pearson Correlation Matrix between CoV and Land Occupation')
+        plt.savefig(f"{analysisDirectory}/corrMatrix_flowDeviations_vs_anthropogenicFeatures.png", dpi=300, bbox_inches='tight')
+        plt.close()
+        #plot pval as a heatmap
+        plt.figure(figsize=(10, 8))  # Adjust the size to your needs
+        mask = pval <= float(1e-300)
+        sns.heatmap(pval, annot=True, fmt='.1e', cmap='Purples_r', center=0, annot_kws={"fontsize": 4}, mask=mask)
+        plt.title('p-values of Pearson Correlation Matrix between CoV and Land Occupation')
+        plt.savefig(f"{analysisDirectory}/pvalMatrix_flowDeviations_vs_anthropogenicFeatures.png", dpi=300, bbox_inches='tight')
+        plt.close()
+        del src, gdf, dst
+    
+    
+        print("Extract 1st column of correlation and pvalue matrices as a separate file")
+        
+        corr_col = list(corr[f"MeanAnnualCoV_{timeRange[0]}{timeRange[1]}"])
+        pval_col = list(pval[f"MeanAnnualCoV_{timeRange[0]}{timeRange[1]}"])
+        idx = list(corr.columns)
+        frames = {'corr_coeff': corr_col,'p_value':pval_col}
+        df = pd.DataFrame(frames,index=idx)
+        df.to_csv(f"{analysisDirectory}/corrMatrix_flowDeviations_only.csv")
+
     else:
-        pass
-    for occ in occupationClassesAll:
-        pixValue = float(occ)
-        tmp = nomm.loc[nomm['pixelValue'] == pixValue]
-        pixLabel = list(tmp['pixelLabel'])[0]
-        values = [np.round(x,decimals=2) for x in list(gdf[f"occupation_class{str(occ)}"])]
-        gdf.loc[:,f"{str(pixLabel)}"] = values
-        #Clean dataframe
-        gdf.drop(f"occupation_class{str(occ)}",axis=1,inplace=True)
-        gdf.dropna(axis=1,how='all',inplace=True)
-    #Compute correlation and significance
-    corr_frames = {}
-    pval_frames = {}
-    idx = []
-    for x in list(gdf.columns):
-        idx.append(f"{str(x)}")
-        for y in list(gdf.columns):
-            c, p = scipy.stats.pearsonr(list(gdf[f"{str(x)}"]), list(gdf[f"{str(y)}"]), alternative='two-sided')
-            if f"{str(y)}" not in corr_frames:
-                corr_frames[f"{str(y)}"] = []
-                corr_frames[f"{str(y)}"].append(c)
-                pval_frames[f"{str(y)}"] = []
-                pval_frames[f"{str(y)}"].append(p)
-            else:
-                corr_frames[f"{str(y)}"].append(c)
-                pval_frames[f"{str(y)}"].append(p)
-    corr = pd.DataFrame(corr_frames,index=idx)
-    pval = pd.DataFrame(pval_frames,index=idx)
-    #corr = gdf.corr(method='pearson')
-    #pval = corr.map(lambda x: np.round(scipy.stats.norm.cdf(x),decimals=2))
-    #Clean dataframe from (for some reason) empty rows
-    corr.dropna(axis=1,how='all',inplace=True)
-    corr.dropna(axis=0,how='all',inplace=True)
-    pval.dropna(axis=1,how='all',inplace=True)
-    pval.dropna(axis=0,how='all',inplace=True)
-    #Write to disk
-    dst = f"{analysisDirectory}/corrMatrix_flowDeviations_vs_anthropogenicFeatures.csv"
-    corr.to_csv(dst)
-    dst = f"{analysisDirectory}/pvalMatrix_flowDeviations_vs_anthropogenicFeatures.csv"
-    pval.to_csv(dst)
-    #plot corr as a heatmap
-    plt.figure(figsize=(10, 8))  # Adjust the size to your needs
-    mask = corr >= float(0.99)
-    sns.heatmap(corr, annot=True, fmt='.1e', cmap='vlag', center=0, annot_kws={"fontsize": 4}, mask=mask)
-    plt.title('Pearson Correlation Matrix between CoV and Land Occupation')
-    plt.savefig(f"{analysisDirectory}/corrMatrix_flowDeviations_vs_anthropogenicFeatures.png", dpi=300, bbox_inches='tight')
-    plt.close()
-    #plot pval as a heatmap
-    plt.figure(figsize=(10, 8))  # Adjust the size to your needs
-    mask = pval <= float(1e-300)
-    sns.heatmap(pval, annot=True, fmt='.1e', cmap='Purples_r', center=0, annot_kws={"fontsize": 4}, mask=mask)
-    plt.title('p-values of Pearson Correlation Matrix between CoV and Land Occupation')
-    plt.savefig(f"{analysisDirectory}/pvalMatrix_flowDeviations_vs_anthropogenicFeatures.png", dpi=300, bbox_inches='tight')
-    plt.close()
-    del src, gdf, dst
-
-
-    print("Extract 1st column of correlation and pvalue matrices as a separate file")
-    
-    corr_col = list(corr[f"MeanAnnualCoV_{timeRange[0]}{timeRange[1]}"])
-    pval_col = list(pval[f"MeanAnnualCoV_{timeRange[0]}{timeRange[1]}"])
-    idx = list(corr.columns)
-    frames = {'corr_coeff': corr_col,'p_value':pval_col}
-    df = pd.DataFrame(frames,index=idx)
-    df.to_csv(f"{analysisDirectory}/corrMatrix_flowDeviations_only.csv")
-    
+        print("WARNING : Correlation matrix is not possible with only one catchment, adjust the time range to increase the number of catchments") 
 
     with open(f"{wd}/log.txt", 'a') as file:
         file.write(f"MODULE5.py Elapsed Time: {str(datetime.datetime.now()-globstart)}\n")
