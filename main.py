@@ -1,3 +1,21 @@
+"""
+Copyright (c) [2024] [Quentin DASSIBAT]
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+"""
+
+
 ####################
 # Import libraries #
 ####################
@@ -22,7 +40,7 @@ pd.options.mode.chained_assignment = None
 ##################
 
 #Area of Interest
-AoI_filePath = "empriseSudLoire.gpkg" #path to file with extension
+AoI_filePath = "emprise_agglo_cotentin_epsg4326.gpkg" #path to file with extension
 AoI_fileIsRaster = False #False if AoI is a vector file (.shp, .gpkg...); True if AoI is a raster file (.tif...)
 AoI_EPSG = 4326 #ESPG code in which AoI_filePath is projected [int] e.g. 4326 #WARNING: !!has been developped with EPSG:4326 only, hence may not work with other EPSGs at this stage!!
 
@@ -32,15 +50,15 @@ timeRange = [2000,2020] #e.g. [2000,2020] for Water Balance Model (Wisser et al,
 #Modules to run
 runModule0 = False #True if Module 0 needs to be ran ; False if not
 runModule1 = False 
-runModule2 = True
+runModule2 = False
 runModule3 = False
 runModule4 = True
-runModule5 = True
+runModule5 = False
 
 #Miscellaneous
 flushAllDirectories = False # Usefull to study a new AoI
 operationStatus = False #True will keep only those stations that are still operating now a days; False will keep them all 
-plottingMMF = False #True will generate the scatter plot with deviation bars of MMF for each station; False will not generate plot 
+plottingMMF = True #True will generate the scatter plot with deviation bars of MMF for each station; False will not generate plot 
 plottingMKtest = True #true will generate the scatter plot of the series and the trend of Mann-Kendall regression ; False will not generate plot
 flushDisk = False #True will delete folder "./tmp" and its files; False will keep it
 accThreshold = 1e4 #Defines which pixel is considered part of an actively flowing river, with the value of 1000 as a presumptive standard
@@ -137,7 +155,7 @@ if runModule0 is True:
     hydrofunc.requestFrontend_observations_hubeau(src,dst,tRange=period)
     del src, dst
 
-    print("Download SRTM-30 DEM from opentopography API")
+    print("Download SRTM-90 DEM from opentopography API")
     
     dst = f"{dataDirectory}/DEM.tif"
     hydrofunc.request_DEM(AoI_bbox,AoI_EPSG,dst)
@@ -171,10 +189,10 @@ if runModule0 is True:
     hydrofunc.request_osm_feature(AoI_bbox,AoI_EPSG,feat,dst)
     del dst, feat
 
-    Print("Force CLC land occupation raster to the same projection as the current project") 
+    print("Force CLC land occupation raster to the same projection as the current project") 
     
     src = "U2018_CLC2018_V2020_20u1.tif"
-    dst = f"{tmpDirectory}/U2018_CLC2018_V2020_20u1_EPSG{str(AoI_EPSG)}.tif"
+    dst = f"{dataDirectory}/U2018_CLC2018_V2020_20u1_EPSG{str(AoI_EPSG)}.tif"
     hydrofunc.reproject_raster(src,dst,AoI_EPSG)
     del src, dst
 
@@ -628,13 +646,13 @@ if runModule5 is True:
     unitCatchment.to_file(f"{tmpDirectory}/unitCatchment.gpkg")
     del src, tmp, union_polygon
     #Clip land occupation raster to the shape of all catchments within the AoI
-    src = f"{tmpDirectory}/U2018_CLC2018_V2020_20u1_EPSG{str(AoI_EPSG)}.tif"
-    dst = f"{tmpDirectory}/CLC_AoI.tif"
+    src = f"{dataDirectory}/U2018_CLC2018_V2020_20u1_EPSG{str(AoI_EPSG)}.tif"
+    dst = f"{dataDirectory}/CLC_AoI.tif"
     m = f"{tmpDirectory}/unitCatchment.gpkg"
     hydrofunc.clip_to_shapefile(src,dst,AoI_EPSG,m)
     del src, dst
     #Count all tied pixel values 
-    srcAll = f"{tmpDirectory}/CLC_AoI.tif"
+    srcAll = f"{dataDirectory}/CLC_AoI.tif"
     f = hydrofunc.extract_cellsValues(srcAll)
     df = pd.DataFrame(f)
     occupationClassesAll = list(set(df['values']))
@@ -660,51 +678,57 @@ if runModule5 is True:
         for feat in listFeatures:
             
             #Import features and check wheter there is any such feature throughout the whole AoI
-            
-            features = gpd.read_file(f"{dataDirectory}/{str(feat)}.gpkg") #Has been saved in EPSG = to AoI_EPSG
 
-            if len(features) != 0:
-                
-                feature = list(features['feature'])[0]
+            src = f"{dataDirectory}/{str(feat)}.gpkg"
             
-                #Clip features
-                features_clip = gpd.clip(features, mask)
-                
-                #Check whether there is any such feature thoughout the subcatchment
-                
-                if len(features_clip) != 0:
-                    
-                    #Get the km2 area of the subcatchment
-                    mask.to_crs("EPSG:3857",inplace=True) #Cartesian metric CRS
-                    mask.loc[:,"area_km2"] = mask['geometry'].area/(10**6)
-                    mask.to_crs(f"EPSG:{str(AoI_EPSG)}",inplace=True)
-                    #Count the number of entities as a fraction of area_km2
-                    features_clip.drop_duplicates(subset='feature',inplace=True)
-                    km2 = list(mask['area_km2'])[0]
-                    entities_per_km2 = len(features_clip)/float(km2)
-                    mask.loc[:,'entities_per_km2'] = entities_per_km2
-                    #Write into dataframe the feature collected
-                    mask.loc[:,'feature'] = feature
-                    #Keep in mask only 'feature', 'entities_per_km2', 'geometry', 'MeanAnnualCoV_timeRange', 'code_station'
-                    tmp = mask[['code_station',
-                                f"MeanAnnualCoV_{str(timeRange[0])}{str(timeRange[1])}",
-                                'feature',
-                                'entities_per_km2',
-                                'geometry']]
+            if os.path.exists(src):
+            
+                features = gpd.read_file(src) #Has been saved in EPSG = to AoI_EPSG
     
-                else:
+                if len(features) != 0:
                     
-                    mask.loc[:,'feature'] = feature
-                    mask.loc[:,'entities_per_km2'] = float(0)
-                    tmp = mask[['code_station',
-                                f"MeanAnnualCoV_{str(timeRange[0])}{str(timeRange[1])}",
-                                'feature',
-                                'entities_per_km2',
-                                'geometry']]
+                    feature = list(features['feature'])[0]
                 
-                #Save to list to further concatenate
-                listDataframes.append(tmp)
-            
+                    #Clip features
+                    features_clip = gpd.clip(features, mask)
+                    
+                    #Check whether there is any such feature thoughout the subcatchment
+                    
+                    if len(features_clip) != 0:
+                        
+                        #Get the km2 area of the subcatchment
+                        mask.to_crs("EPSG:3857",inplace=True) #Cartesian metric CRS
+                        mask.loc[:,"area_km2"] = mask['geometry'].area/(10**6)
+                        mask.to_crs(f"EPSG:{str(AoI_EPSG)}",inplace=True)
+                        #Count the number of entities as a fraction of area_km2
+                        features_clip.drop_duplicates(subset='feature',inplace=True)
+                        km2 = list(mask['area_km2'])[0]
+                        entities_per_km2 = len(features_clip)/float(km2)
+                        mask.loc[:,'entities_per_km2'] = entities_per_km2
+                        #Write into dataframe the feature collected
+                        mask.loc[:,'feature'] = feature
+                        #Keep in mask only 'feature', 'entities_per_km2', 'geometry', 'MeanAnnualCoV_timeRange', 'code_station'
+                        tmp = mask[['code_station',
+                                    f"MeanAnnualCoV_{str(timeRange[0])}{str(timeRange[1])}",
+                                    'feature',
+                                    'entities_per_km2',
+                                    'geometry']]
+        
+                    else:
+                        
+                        mask.loc[:,'feature'] = feature
+                        mask.loc[:,'entities_per_km2'] = float(0)
+                        tmp = mask[['code_station',
+                                    f"MeanAnnualCoV_{str(timeRange[0])}{str(timeRange[1])}",
+                                    'feature',
+                                    'entities_per_km2',
+                                    'geometry']]
+                    
+                    #Save to list to further concatenate
+                    listDataframes.append(tmp)
+                
+                else:
+                    pass
             else:
                 pass
 
@@ -714,7 +738,7 @@ if runModule5 is True:
         #Clip land occupation raster to the current catchment
         maskFile = f"{tmpDirectory}/mmf_average_station_{str(station)}_catchment.gpkg"
         mask.to_file(maskFile)
-        src = f"{tmpDirectory}/U2018_CLC2018_V2020_20u1_EPSG{str(AoI_EPSG)}.tif"
+        src = f"{dataDirectory}/U2018_CLC2018_V2020_20u1_EPSG{str(AoI_EPSG)}.tif"
         dst = f"{tmpDirectory}/CLC_station_{str(station)}.tif"
         hydrofunc.clip_to_shapefile(src,dst,AoI_EPSG,maskFile)
         del maskFile, src, dst
@@ -758,6 +782,8 @@ if runModule5 is True:
         else:
             
             frames = {'code_station':[],'feature':[],'entities_per_km2':[],f"MeanAnnualCoV_{str(timeRange[0])}{str(timeRange[1])}":[],'geometry':[]}
+            MeanAnnualCoV = list(mask[f"MeanAnnualCoV_{str(timeRange[0])}{str(timeRange[1])}"])[0]
+            geom = list(mask["geometry"])[0]
             for occ in occupationClassesAll:
                 frames['feature'].append(f"occupation_class{str(occ)}")
                 frames['entities_per_km2'].append(float(0))

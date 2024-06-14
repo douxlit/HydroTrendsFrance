@@ -1,3 +1,22 @@
+"""
+Copyright (c) [2024] [Quentin DASSIBAT]
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+"""
+
+
+
 def extract_Rasterbbox(srcFile):
 
     """
@@ -128,36 +147,36 @@ def request_osm_feature(bbox,bboxEPSG,tags,dstFile):
     #Request 
     lbbox = newbbox.split()
     fbbox = [float(coord) for coord in lbbox]
-    print(fbbox)
     obbox = [fbbox[3],fbbox[1],fbbox[2],fbbox[0]]
-    print(obbox)
     tbbox = tuple(obbox)
-    print(tbbox)
-    gdf = ox.features.features_from_bbox(bbox=tbbox, tags=tags)
-    #gdf = ox.features.features_from_bbox(north=fbbox[3],nort=fbbox[1],fbbox[2],fbbox[0],tags)
-    gdf.set_crs(epsg=4326, inplace=True)
+    
+    try:
+        gdf = ox.features.features_from_bbox(bbox=tbbox, tags=tags)
+        
+        gdf.set_crs(epsg=4326, inplace=True)
+        #Keep only the geometry column and the POINT-geometry rows and the column corresponding to the feature called in 'tags' parameter
+        key = list(tags.keys())[0]
+        gdfc = gdf[['geometry',f"{str(key)}"]]
+        gdfc.loc[:,'feature'] = list(gdfc[f"{str(key)}"]) #rename "key" column with "feature"
+        gdfc.drop(f"{str(key)}",axis=1,inplace=True)
+        gdfcc = gdfc.loc[gdfc['geometry'].geom_type == 'Point'] #keep only point geometries
+        gdfcc.reset_index(inplace=True,drop=True)
+        #Reproject gdf if needed 
+        if bboxEPSG != 4326:
+            res = gdfcc.to_crs(f"EPSG:{str(bboxEPSG)}")
+        else:
+            res = gdfcc.copy()
+        #Write to disk as dstFile
+        res.to_file(dstFile)
 
-    #Keep only the geometry column and the POINT-geometry rows and the column corresponding to the feature called in 'tags' parameter
-    key = list(tags.keys())[0]
-    gdfc = gdf[['geometry',f"{str(key)}"]]
-    gdfc.loc[:,'feature'] = list(gdfc[f"{str(key)}"]) #rename "key" column with "feature"
-    gdfc.drop(f"{str(key)}",axis=1,inplace=True)
-    gdfcc = gdfc.loc[gdfc['geometry'].geom_type == 'Point'] #keep only point geometries
-    gdfcc.reset_index(inplace=True,drop=True)
+    except (ox._errors.InsufficientResponseError,ox._errors.ResponseStatusCodeError) as e:
+        print(f"OSMnx error occurred: {e} for tags {tags}")
+        pass
+    
 
-    #Reproject gdf if needed 
-    if bboxEPSG != 4326:
-        res = gdfcc.to_crs(f"EPSG:{str(bboxEPSG)}")
-    else:
-        res = gdfcc.copy()
-
-    #Write to disk as dstFile
-    res.to_file(dstFile)
-
-    return res
+    return 
     
         
-
 
 
 def request_locations_hubeau(bbox,dstFile,operating,tRange=None):
@@ -618,17 +637,41 @@ def compute_MeanMonthlyFlow_average(stationCode,stationsLayer,dstLayer,period,ge
         
         #Draw hydrogram if specified by generate_plot=True
         if generate_plot is True:
+
+            fig, ax1 = plt.subplots()
+
+            #Plot hydrogram on the left y-axis
+            
             x_axis = [x+1 for x in range(12)]
-            #plt.plot(x_axis, mu_Y, 'k') #plot(x,y,format,x,y2,format2,...,x,yN,formatN)
-            plt.errorbar(x_axis, mu_Y, yerr = sigma_Y, fmt ='o')
-            #plt.axis([1, 12, np.min(mu_Y), 20]) #graph bbox xmin, xmax, ymin, ymax
-            plt.xticks(x_axis)
-            plt.ylabel('QmM moyen sur la période [l.s-1]',fontsize=9)
-            plt.xlabel('mois',fontsize=9)
-            plt.title('Hydrogramme mensuel moyen de la station {stas} sur la période {span}'.
-                      format(stas=stationCode,span=period),fontsize=9)
-            plt.savefig('./debits_mensuels_moyens/dmm_{stas}.png'.format(stas=stationCode),bbox_inches='tight')
+            ax1.errorbar(x_axis, mu_Y, yerr = sigma_Y, fmt ='o', label='MMF', color='#1f77b4')
+            #plt.xticks(x_axis)
+            ax1.set_ylabel(f"Mean Monthly Flow [l.s-1]",fontsize=9, color='#1f77b4')
+            ax1.set_xlabel('month',fontsize=9)
+            ax1.tick_params(axis='y', labelcolor='#1f77b4')
+
+            #Plot CoV on the right y-axis
+            col_list = [f"CoV_month{x}_{period[0]}{period[1]}" for x in range(1,13)]
+            final_gdf_sigma = final_gdf[col_list]
+            final_gdfT = final_gdf_sigma.T #gives a df with one column 'code_station' and former columns turned to rows
+            cov_list = list(final_gdfT[0])
+            
+            ax2 = ax1.twinx()
+            ax2.plot(x_axis, cov_list, '4', label='CoV', color='#d62728', markersize=9)
+            ax2.set_ylabel('Monthly Coefficients of Variation', color='#d62728',fontsize=9)
+            ax2.tick_params(axis='y', labelcolor='#d62728')
+            
+            ax1.set_xticks(x_axis)
+            ax1.set_xticklabels(['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'])
+            ax2.set_yticks(np.arange(np.round(min(cov_list),decimals=2),np.round(max(cov_list),decimals=2),0.1))
+            ax2.grid(True)
+            
+            fig.suptitle(f"Mean Monthly Flow and Variation of station {str(stationCode)} over the period {period[0]}-{period[1]}",fontsize=9)
+            
+            fig.text(0.03, 0.03, '(c) Q. DASSIBAT -- CC BY 4.0', fontsize=5, color='gray', va='bottom', ha='left')
+            
+            plt.savefig(f"./analysis/MMF_{stationCode}_{period[0]}{period[1]}.png",bbox_inches='tight',dpi=300)
             plt.close() #sinon à chaque appel de la fonction la figure est dessinée sur le même graphe
+        
         else:
             pass
             
@@ -948,7 +991,8 @@ def MannKendallStat(stationCode,srcFile,datesLayerName,valuesLayerName,statistic
             plt.ylabel('Monthly Flow Deviation [l.s-1]')
         plt.legend(loc="upper right")
         plt.title(f"Monthly flow variation and linear trend at gauging station {stationCode}") 
-        plt.savefig(f"./analysis/MannKendallRegression_MMF_{statistic}_station{stationCode}.png")
+        plt.text(0.03, 0.03, '(c) Q. DASSIBAT -- CC BY 4.0', fontsize=5, color='gray', transform=plt.gcf().transFigure)
+        plt.savefig(f"./analysis/MannKendallRegression_MMF_{statistic}_station{stationCode}.png",dpi=300)
         #plt.show()
         plt.close()
 
@@ -1033,6 +1077,7 @@ def make_map_LabelsOnPoints(srcLayerPolygons,layerNameForPolygons,layerNameForLa
     ax.set_ylabel('Latitude')
     plt.tight_layout()
     plt.subplots_adjust(top=0.95)
+    fig.text(0.05, 0.05, '(c) Q. DASSIBAT -- CC BY 4.0', fontsize=7, color='gray', va='bottom', ha='left')
 
     #Add legend
     #label_legend = Line2D([0], [0], marker='o', color='w', label='confidence_level',
@@ -1123,6 +1168,7 @@ def make_map_LabelsOnPolygons(srcLayerPolygons,layerNameForPolygons,layerNameFor
     ax.set_ylabel('Latitude')
     plt.tight_layout()
     plt.subplots_adjust(top=0.95)
+    fig.text(0.0, 0.05, '(c) Q. DASSIBAT -- CC BY 4.0', fontsize=7, color='gray', va='bottom', ha='left')
 
     #Add legend
     #label_legend = Line2D([0], [0], marker='o', color='w', label='confidence_level',
