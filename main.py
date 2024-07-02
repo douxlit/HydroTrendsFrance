@@ -40,26 +40,28 @@ pd.options.mode.chained_assignment = None
 ##################
 
 #Area of Interest
-AoI_filePath = "emprise_agglo_cotentin_epsg4326.gpkg" #path to file with extension
+AoI_filePath = "empriseSudLoire.gpkg" #path to file with extension
 AoI_fileIsRaster = False #False if AoI is a vector file (.shp, .gpkg...); True if AoI is a raster file (.tif...)
 AoI_EPSG = 4326 #ESPG code in which AoI_filePath is projected [int] e.g. 4326 #WARNING: !!has been developped with EPSG:4326 only, hence may not work with other EPSGs at this stage!!
 
 #Period of Interest
-timeRange = [1978,2023] #e.g. [2000,2020] for Water Balance Model (Wisser et al, 2010) as used in Rockstrom et al, 2023 
+timeRange = [2000,2020] #e.g. [2000,2020] for Water Balance Model (Wisser et al, 2010) as used in Rockstrom et al, 2023 
 
 #Modules to run
-runModule0 = True #True if Module 0 needs to be ran ; False if not
-runModule1 = True 
-runModule2 = True
-runModule3 = True
-runModule4 = True
-runModule5 = True
+runModule0 = False #True if Module 0 needs to be ran ; False if not
+runModule1 = False 
+runModule2 = False
+runModule3 = False
+runModule4 = False
+runModule5 = False
+runModule6 = True
 
 #Miscellaneous
 flushAllDirectories = False # Usefull to study a new AoI
 operationStatus = False #True will keep only those stations that are still operating now a days; False will keep them all 
-plottingMMF = True #True will generate the scatter plot with deviation bars of MMF for each station; False will not generate plot 
+plottingMMF = False #True will generate the scatter plot with deviation bars of MMF for each station; False will not generate plot 
 plottingMKtest = True #true will generate the scatter plot of the series and the trend of Mann-Kendall regression ; False will not generate plot
+percentChange = 0.2 #Value from 0 to 1 that defines the threshold considered unsustainable for flow variability anomaly (executed in Module 6 only) 
 flushDisk = False #True will delete folder "./tmp" and its files; False will keep it
 accThreshold = 1e4 #Defines which pixel is considered part of an actively flowing river, with the value of 1000 as a presumptive standard
 
@@ -365,7 +367,8 @@ if runModule2 is True:
 
     #Compute MMF for each month and each station and the compute Mann-Kendall trend for average and stdev
 
-    list_df = [] #to save the df of each station and further merge them
+    list_mmf = [] #to save the df of mean monthly flows and further merge them
+    list_mk = [] #to save the df of MK regression and further merge them
     
     for station in stationsList:
     
@@ -392,7 +395,8 @@ if runModule2 is True:
         #Export as .csv
         if os.path.exists(dst) is True:
             mmf.drop('geometry',axis=1,inplace=True)
-            mmf.to_csv(f"{dataDirectory}/mmf_all_station_{str(station)}_{str(timeRange[0])}{str(timeRange[1])}.csv")
+            mmf.to_csv(f"{dataDirectory}/mmf_all_station_{str(station)}_{str(timeRange[0])}{str(timeRange[1])}.csv",index=False)
+            list_mmf.append(mmf)
         else:
             pass
         del dst, mmf
@@ -424,26 +428,38 @@ if runModule2 is True:
             frames['globalTrend_std'].append(t)
             frames['p_value_std'].append(c)
             #Store data 
-            list_df.append(pd.DataFrame(frames))
+            list_mk.append(pd.DataFrame(frames))
         else:
             print(f"File does not exist: {src}")
         
-    #Generate and export dataframe     
-    df = pd.concat(list_df)     
+    #Generate and export MK dataframe     
+    df = pd.concat(list_mk)     
     #As a .csv     
     dst = f"{analysisDirectory}/MannKendallRegression_{str(timeRange[0])}{str(timeRange[1])}.csv"
-    df.to_csv(dst)
-    del dst
+    df.to_csv(dst,index=False)
+    del dst, df
+    #Generate and export MMF dataframe
+    df = pd.concat(list_mmf)
+    dst = f"{dataDirectory}/mmf_all_{str(timeRange[0])}{str(timeRange[1])}.csv"
+    df.to_csv(dst,index=False)
+    del dst, df
     
-    #Export as a point-geometry .gpkg
+    #Export MK df as a point-geometry .gpkg
     dst = f"{analysisDirectory}/MannKendallRegression_{str(timeRange[0])}{str(timeRange[1])}_points.gpkg"
     points = gpd.read_file(f"{dataDirectory}/stations_locations_{str(timeRange[0])}{str(timeRange[1])}.gpkg")
     points_cut = points[['code_station','geometry']]
-    #only keep points that have valid geometry
-    #points_cut2 = points_cut[~points_cut.geometry.isnull()]
-    #points_cut2['geometry'] = points_cut2['geometry'].astype("string")
+    df = pd.read_csv(f"{analysisDirectory}/MannKendallRegression_{str(timeRange[0])}{str(timeRange[1])}.csv")
     join = df.merge(points_cut,left_on='code_station',right_on='code_station',how = 'left')
-    #join['geometry'] = join['geometry'].apply(wkt.loads)
+    gdf = gpd.GeoDataFrame(join,geometry='geometry',crs=f"EPSG:{str(AoI_EPSG)}")
+    gdf.to_file(dst)
+    del df, join, gdf, dst
+
+    #Export MMF df as a point-geometry .gpkg
+    dst = f"{dataDirectory}/mmf_all_{str(timeRange[0])}{str(timeRange[1])}_points.gpkg"
+    points = gpd.read_file(f"{dataDirectory}/stations_locations_{str(timeRange[0])}{str(timeRange[1])}.gpkg")
+    points_cut = points[['code_station','geometry']]
+    df = pd.read_csv(f"{dataDirectory}/mmf_all_{str(timeRange[0])}{str(timeRange[1])}.csv")
+    join = df.merge(points_cut,left_on='code_station',right_on='code_station',how = 'left')
     gdf = gpd.GeoDataFrame(join,geometry='geometry',crs=f"EPSG:{str(AoI_EPSG)}")
     gdf.to_file(dst)
     del df, join, gdf, dst
@@ -539,8 +555,18 @@ if runModule4 is True:
     catch = gpd.read_file(f"{dataDirectory}/subcatchments_analyzed.gpkg")
     m = catch.merge(mmf_average,left_on='code_station',right_on='code_station',how='left')
     m.to_file(f"{analysisDirectory}/stations_observations_mmf_average_{str(timeRange[0])}{str(timeRange[1])}_subcatchments.gpkg")
-    del mmf_average, m
-    
+    del mmf_average, m, catch
+
+    print("Rendering MMF_all catchment-wise")
+
+    #Join with subcatchment vector file
+    mmf_all = gpd.read_file(f"{dataDirectory}/mmf_all_{str(timeRange[0])}{str(timeRange[1])}_points.gpkg")
+    mmf_all.drop('geometry',axis=1,inplace=True)
+    catch = gpd.read_file(f"{dataDirectory}/subcatchments_analyzed.gpkg")
+    m = catch.merge(mmf_all,left_on='code_station',right_on='code_station',how='left')
+    m.to_file(f"{dataDirectory}/mmf_all_{str(timeRange[0])}{str(timeRange[1])}_subcatchments.gpkg")
+    del mmf_all, m, catch
+
     print("Rendering MK analysis catchment-wise")
 
     #Read dataframe of MK regression
@@ -561,29 +587,67 @@ if runModule4 is True:
     del df, join, gdf, dst
 
     print("Generate fancy maps")
-    
+
     #For the trend on the flow mean
     srcPolygData = f"{analysisDirectory}/MannKendallRegression_{str(timeRange[0])}{str(timeRange[1])}_subcatchments.gpkg"
-    srcPoints = f"{dataDirectory}/stations_locations_NoTimeRangeConstraint.gpkg"
+    ##Prepare pointsLayer to display: retrieve position of stations in accuflux map
+    points2accuflux = gpd.read_file(f"{tmpDirectory}/stations2accuflux_analyzed.gpkg")
+    points = gpd.read_file(f"{analysisDirectory}/MannKendallRegression_{str(timeRange[0])}{str(timeRange[1])}_points.gpkg")
+    points2accuflux_cut = points2accuflux[['code_station','geometry']]
+    points_cut = points.drop('geometry',axis=1)
+    m = points2accuflux_cut.merge(points_cut,left_on='code_station',right_on='code_station',how='left')
+    m.to_file(f"{analysisDirectory}/stations2accuflux_MannKendallRegression_{str(timeRange[0])}{str(timeRange[1])}_points.gpkg")
+    ##Plot
+    srcPoints = f"{analysisDirectory}/stations2accuflux_MannKendallRegression_{str(timeRange[0])}{str(timeRange[1])}_points.gpkg"
     srcPolygNodata = f"{dataDirectory}/subcatchments_all.gpkg"
     dst = f"{analysisDirectory}/MannKendallRegression_{str(timeRange[0])}{str(timeRange[1])}_GlobalTrendOfMean_map.png"
     polyg = 'globalTrend_mean'
     label = 'p_value_mean'
-    title = f"Gobal trend of Mean Monthly Flows (colors) and their p-values (labels) over the period {str(timeRange[0])}-{str(timeRange[1])}"
-    hydrofunc.make_map_LabelsOnPolygons(srcPolygData,polyg,label,srcPoints,srcPolygNodata,title,dst)
+    title = f"Global trend of Mean Monthly Flows (colors) and their p-values (labels) over the period {str(timeRange[0])}-{str(timeRange[1])}"
+    hydrofunc.make_map_LabelsOnPoints(srcPolygData,polyg,label,srcPoints,srcPolygNodata,title,dst)
     del srcPolygData, polyg, label, title, dst, srcPoints, srcPolygNodata
-    
+
     #For the trend on the flow deviation
     srcPolygData = f"{analysisDirectory}/MannKendallRegression_{str(timeRange[0])}{str(timeRange[1])}_subcatchments.gpkg"
-    srcPoints = f"{dataDirectory}/stations_locations_NoTimeRangeConstraint.gpkg"
+    ##Prepare pointsLayer to display: retrieve position of stations in accuflux map
+    points2accuflux = gpd.read_file(f"{tmpDirectory}/stations2accuflux_analyzed.gpkg")
+    points = gpd.read_file(f"{analysisDirectory}/MannKendallRegression_{str(timeRange[0])}{str(timeRange[1])}_points.gpkg")
+    points2accuflux_cut = points2accuflux[['code_station','geometry']]
+    points_cut = points.drop('geometry',axis=1)
+    m = points2accuflux_cut.merge(points_cut,left_on='code_station',right_on='code_station',how='left')
+    m.to_file(f"{analysisDirectory}/stations2accuflux_MannKendallRegression_{str(timeRange[0])}{str(timeRange[1])}_points.gpkg")
+    ##Plot
+    srcPoints = f"{analysisDirectory}/stations2accuflux_MannKendallRegression_{str(timeRange[0])}{str(timeRange[1])}_points.gpkg"
     srcPolygNodata = f"{dataDirectory}/subcatchments_all.gpkg"
     dst = f"{analysisDirectory}/MannKendallRegression_{str(timeRange[0])}{str(timeRange[1])}_GlobalTrendOfDeviation_map.png"
     polyg = 'globalTrend_std'
     label = 'p_value_std'
     title = f"Global trend of Monthly Flow Deviations (colors) and their p-values (labels) over the period {str(timeRange[0])}-{str(timeRange[1])}"
-    hydrofunc.make_map_LabelsOnPolygons(srcPolygData,polyg,label,srcPoints,srcPolygNodata,title,dst)
+    hydrofunc.make_map_LabelsOnPoints(srcPolygData,polyg,label,srcPoints,srcPolygNodata,title,dst)
     del srcPolygData, polyg, label, title, dst, srcPoints, srcPolygNodata
-
+    
+    #For the trend on the flow mean
+    #srcPolygData = f"{analysisDirectory}/MannKendallRegression_{str(timeRange[0])}{str(timeRange[1])}_subcatchments.gpkg"
+    #srcPoints = f"{dataDirectory}/stations_locations_NoTimeRangeConstraint.gpkg"
+    #srcPolygNodata = f"{dataDirectory}/subcatchments_all.gpkg"
+    #dst = f"{analysisDirectory}/MannKendallRegression_{str(timeRange[0])}{str(timeRange[1])}_GlobalTrendOfMean_map.png"
+    #polyg = 'globalTrend_mean'
+    #label = 'p_value_mean'
+    #title = f"Gobal trend of Mean Monthly Flows (colors) and their p-values (labels) over the period {str(timeRange[0])}-{str(timeRange[1])}"
+    #hydrofunc.make_map_LabelsOnPolygons(srcPolygData,polyg,label,srcPoints,srcPolygNodata,title,dst,plotPoints=False)
+    #del srcPolygData, polyg, label, title, dst, srcPoints, srcPolygNodata
+    
+    #For the trend on the flow deviation
+    #srcPolygData = f"{analysisDirectory}/MannKendallRegression_{str(timeRange[0])}{str(timeRange[1])}_subcatchments.gpkg"
+    #srcPoints = f"{dataDirectory}/stations_locations_NoTimeRangeConstraint.gpkg"
+    #srcPolygNodata = f"{dataDirectory}/subcatchments_all.gpkg"
+    #dst = f"{analysisDirectory}/MannKendallRegression_{str(timeRange[0])}{str(timeRange[1])}_GlobalTrendOfDeviation_map.png"
+    #polyg = 'globalTrend_std'
+    #label = 'p_value_std'
+    #title = f"Global trend of Monthly Flow Deviations (colors) and their p-values (labels) over the period {str(timeRange[0])}-{str(timeRange[1])}"
+    #hydrofunc.make_map_LabelsOnPolygons(srcPolygData,polyg,label,srcPoints,srcPolygNodata,title,dst,plotPoints=False)
+    #del srcPolygData, polyg, label, title, dst, srcPoints, srcPolygNodata
+    
     #For the average annual flow deviation
     srcPolygData = f"{analysisDirectory}/stations_observations_mmf_average_{str(timeRange[0])}{str(timeRange[1])}_subcatchments.gpkg"
     ##Prepare pointsLayer to display: retrieve position of stations in accuflux map
@@ -935,9 +999,9 @@ if runModule5 is True:
         corr_col = list(corr[f"MeanAnnualCoV_{timeRange[0]}{timeRange[1]}"])
         pval_col = list(pval[f"MeanAnnualCoV_{timeRange[0]}{timeRange[1]}"])
         idx = list(corr.columns)
-        frames = {'corr_coeff': corr_col,'p_value':pval_col}
-        df = pd.DataFrame(frames,index=idx)
-        df.to_csv(f"{analysisDirectory}/corrMatrix_flowDeviations_only.csv")
+        frames = {'land_occ': idx, 'corr_coeff': corr_col, 'p_value':pval_col}
+        df = pd.DataFrame(frames)
+        df.to_csv(f"{analysisDirectory}/corrMatrix_flowDeviations_only.csv",index=False)
 
     else:
         print("WARNING : Correlation matrix is not possible with only one catchment, adjust the time range to increase the number of catchments") 
@@ -949,6 +1013,258 @@ else:
     pass
 
 
+##########################
+# Module 6: Extra graphs #
+##########################
+
+if runModule6 is True:
+
+    globstart = datetime.datetime.now()
+
+    print("MODULE 6")
+
+    print("Plot Cumulative Distribution Function of monthly CoV forall month and station")
+    
+    gdf = gpd.read_file(f"{analysisDirectory}/stations_observations_mmf_average_{timeRange[0]}{timeRange[1]}_points.gpkg")
+    listStations = list(gdf['code_station'])
+    gdf.set_index('code_station',inplace=True)
+    col_list = [f"CoV_month{x}_{timeRange[0]}{timeRange[1]}" for x in range(1,13)]
+    gdfc = gdf[col_list]
+    gdfcT = gdfc.T #station_codes go now column-wise and CoVs go row-wise
+
+    covList = []
+    plt.figure(figsize=(10, 6))
+    
+    for stas in listStations:
+        gdfcTc = gdfcT[[stas]]
+        gdfcTc.dropna(axis=0,inplace=True)
+        cov = list(gdfcTc[stas])
+        covList.append(cov)
+        # Create the plot
+        #plt.plot([i for i in range(1,13)], cov, label=f"{stas}")
+    values = []
+    for x in range(len(covList)):
+        values += covList[x]
+    values_NoNaN = [x for x in values if np.float64(x) != np.nan]
+    #Calculate the cumulative distribution values
+    counts, bin_edges = np.histogram(values_NoNaN, bins=100, density=True)
+    cdf = np.cumsum(counts)
+    cdf = cdf / cdf[-1]
+
+    # Create the plot
+    plt.plot(bin_edges[1:], cdf, label='CDF')
+
+    # Add title and labels
+    plt.title(f"Cumulative Distribution Function of the Coefficients of Variation over the period {timeRange[0]}-{timeRange[1]}")
+    plt.xlabel('Monthly coefficient of variation')
+    plt.ylabel('Cumulative Distribution Function')
+    #plt.legend()
+    plt.savefig(f"{analysisDirectory}/monthlyCoV_CDF_{timeRange[0]}{timeRange[1]}.png", dpi=300, bbox_inches='tight')
+    plt.close()
+
+
+    print("Compute the ratio of all monthly CoVs to average monthly CoVs")
+
+    gdf_all = gpd.read_file(f"{dataDirectory}/mmf_all_{timeRange[0]}{timeRange[1]}_subcatchments.gpkg")
+    gdf_average = gpd.read_file(f"{analysisDirectory}/stations_observations_mmf_average_{timeRange[0]}{timeRange[1]}_subcatchments.gpkg")
+    
+    gdf_all['date'] = gdf_all['date'].astype("string") 
+    listStations = list(set(gdf_all['code_station']))
+    
+    list_gdfAll = []
+    list_gdfAverage = []
+    
+    for s in listStations:
+        
+        print(f"Station {str(s)} out of {str(len(listStations))}")
+        
+        gdf_all_cut = gdf_all.loc[gdf_all['code_station'] == s]
+        gdf_average_cut = gdf_average.loc[gdf_average['code_station'] == s]
+
+        list2plot = []
+        
+        for i in range(1,13):
+            
+            if i <= 9:
+                pattern = rf'^\d{{4}}-0{str(i)}-\d{{2}}$'
+            else:
+                pattern = rf'^\d{{4}}-{str(i)}-\d{{2}}$'
+                
+            gdf_all_cut2 = gdf_all_cut.loc[gdf_all_cut['date'].str.contains(pattern, regex=True)]
+            gdf_all_cut2.loc[:,"currCoV"] = gdf_all_cut2['MMF_std']/gdf_all_cut2['MMF_mean']
+            avgCoV = gdf_all_cut2['currCoV'].mean(skipna=True)
+            gdf_all_cut2.loc[:,"avgCoV"] = avgCoV
+            gdf_all_cut2.loc[:,"deltaCoV"] = (gdf_all_cut2['currCoV']-avgCoV)/avgCoV
+            lambda_function = lambda x: 1 if (x >= percentChange) | (x <= -percentChange) else (np.nan if x is np.nan else 0)
+            gdf_all_cut2.loc[:,"CoV_overshoot"] = gdf_all_cut2['deltaCoV'].apply(lambda_function)
+            if len(gdf_all_cut2.dropna(axis=0,inplace=False)) != 0:
+                overshot_fq = gdf_all_cut2.loc[:,'CoV_overshoot'].sum() / len(gdf_all_cut2.dropna(axis=0,inplace=False))
+            else:
+                overshot_fq = np.nan
+            gdf_average_cut.loc[:,f"overshoot_fq_month{str(i)}"] = overshot_fq
+            list_gdfAll.append(gdf_all_cut2)
+            list2plot.append(gdf_all_cut2)
+
+        #Plot graph of monthly deltaCoV
+        #Intermediate concatenation for all months and for one station 
+        tmp = pd.concat(list2plot)
+        dates = list(tmp['date'])
+        values = list(tmp['deltaCoV'])
+        tmp['date'] = pd.to_datetime(tmp['date'])
+        tmp = tmp.sort_values(by='date')
+        # Create the plot
+        plt.figure(figsize=(10, 5))
+        # Plot the main line
+        plt.plot(tmp['date'], tmp['deltaCoV'], label='CoV anomaly', color = 'black', marker='o', linestyle='-', markersize=2, linewidth=0.5)
+        # Add the corridor as a filled rectangle
+        corridor_min = percentChange
+        corridor_max = -percentChange
+        plt.fill_between(dates, corridor_min, corridor_max, color='lightblue', alpha=0.3, label='maximum anomaly corridor')
+        # Add labels and title
+        #datesDatetime = np.array(dates, dtype='datetime64')
+        #datesOrdered = np.sort(datesDatetime)
+        #datesStringed = [str(x) for x in list(datesOrdered)]
+        #i = int(np.floor(len(datesStringed)/20))
+        #ticks = [datesStringed[x*i] for x in range(20)]
+
+        nb_ticks = min(20,len(tmp['date']))
+        i = len(tmp['date']) // nb_ticks
+        ticks_position = tmp['date'][::i]
+        if nb_ticks == 20:
+            ticks_strings = [str(x) for x in ticks_position]
+            ticks_labels = [x[:-15] for x in ticks_strings]
+        else:
+            ticks_labels = ticks_position
+        plt.xticks(ticks=ticks_position,labels=ticks_labels,rotation=90)
+        plt.xlabel('Date')
+        plt.ylabel('CoV anomaly (monthly_CoV/average_CoV)')
+        plt.title(f"Monthly Coefficient of Variation anomaly for station {str(s)} over the period {timeRange[0]}-{timeRange[1]}")
+        plt.legend()
+        # Show the plot
+        plt.text(0.03, 0.03, '(c) Q. DASSIBAT -- CC BY 4.0', fontsize=5, color='gray', transform=plt.gcf().transFigure)
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig(f"{analysisDirectory}/monthly_CoV_anomaly_station_{str(s)}.png", dpi=300, bbox_inches='tight')
+        plt.close()
+        del tmp
+        
+        #Compute mean annual frequency of overshoot for each station
+        col_list = [f"overshoot_fq_month{str(x)}" for x in range(1,13)]
+        tmp = gdf_average_cut[col_list]
+        tmpT = tmp.T #gives a df with one column 'code_station' and former columns turned to rows
+        tmpT.dropna(inplace=True)
+        col_name = list(tmpT.columns)[0]
+        mean = tmpT[col_name].mean()
+        gdf_average_cut.loc[:,'overshoot_fq_meanAnnual'] = mean
+        
+        list_gdfAverage.append(gdf_average_cut)
+        
+    #Concat dfs and export
+    gdf_all_export = pd.concat(list_gdfAll)
+    gdf_average_export = pd.concat(list_gdfAverage)
+    #Export as polygons
+    gdf_average_export.to_file(f"{analysisDirectory}/stations_observations_mmf_average_{timeRange[0]}{timeRange[1]}_subcatchments.gpkg")
+    gdf_all_export.to_file(f"{dataDirectory}/mmf_all_{timeRange[0]}{timeRange[1]}_subcatchments.gpkg")
+    #Export as points 
+    src = f"{analysisDirectory}/stations_observations_mmf_average_{timeRange[0]}{timeRange[1]}_points.gpkg"
+    points = gpd.read_file(src)
+    points_cut = points[['code_station','geometry']]
+    gdf_average_export_cut = gdf_average_export.drop(['geometry'],axis=1,inplace=False)
+    points_merged = points_cut.merge(gdf_average_export_cut,left_on='code_station',right_on='code_station',how ='left')
+    gdf = gpd.GeoDataFrame(points_merged,geometry='geometry',crs=f"EPSG:{str(AoI_EPSG)}")
+    dst = f"{analysisDirectory}/stations_observations_mmf_average_{timeRange[0]}{timeRange[1]}_points.gpkg"
+    gdf.to_file(dst)
+
+    #Plot fancy map of mean annual frequency of overshoot
+    #Prepare pointsLayer to display: retrieve position of stations in accuflux map
+    points2accuflux = gpd.read_file(f"{tmpDirectory}/stations2accuflux_analyzed.gpkg")
+    points = gpd.read_file(f"{analysisDirectory}/stations_observations_mmf_average_{str(timeRange[0])}{str(timeRange[1])}_points.gpkg")
+    points2accuflux_cut = points2accuflux[['code_station','geometry']]
+    points_cut = points.drop('geometry',axis=1)
+    m = points2accuflux_cut.merge(points_cut,left_on='code_station',right_on='code_station',how='left')
+    m.to_file(f"{analysisDirectory}/stations2accuflux_observations_mmf_average_{str(timeRange[0])}{str(timeRange[1])}_points.gpkg")
+    #Plot
+    srcPolygData = f"{analysisDirectory}/stations_observations_mmf_average_{str(timeRange[0])}{str(timeRange[1])}_subcatchments.gpkg"
+    srcPoints = f"{analysisDirectory}/stations2accuflux_observations_mmf_average_{str(timeRange[0])}{str(timeRange[1])}_points.gpkg"
+    srcPolygNodata = f"{dataDirectory}/subcatchments_all.gpkg"
+    dst = f"{analysisDirectory}/VariabilityAnomaly_{str(timeRange[0])}{str(timeRange[1])}_map.png"
+    polyg = f"overshoot_fq_meanAnnual"
+    label = f"overshoot_fq_meanAnnual"
+    title = f"Mean annual anomaly of flow variability over the period {str(timeRange[0])}-{str(timeRange[1])}"
+    hydrofunc.make_map_LabelsOnPoints(srcPolygData,polyg,label,srcPoints,srcPolygNodata,title,dst)
+    del srcPolygData, polyg, label, title, dst, srcPoints, srcPolygNodata
+
+    #Normalization of overshoot annual frequency to [0,12] as for ESTRESS indicator in Rockstrom 2023
+    #src = "/home/q.dassibat/python_proj/env3/modules/HydroTrendsFrance/HydroTrendsSudLoireFinal20002020/analysis/stations_observations_mmf_average_20002020_subcatchments.gpkg"
+    #gdf = gpd.read_file(src)
+    #values = list(gdf['overshoot_fq_meanAnnual'])
+    #values_changed = [int(np.trunc(x*12)) for x in values]
+    #gdf.loc[:,'overshoot_fq_meanAnnual_normalizedTo12'] = values_changed
+    #gdf.to_file()
+
+
+    print("Plot correlation matrix of CoV against land occupation as a histogram")
+
+    df = pd.read_csv(f"{analysisDirectory}/corrMatrix_flowDeviations_only.csv")
+    df.sort_values(by=['corr_coeff'],ascending=True, inplace=True)
+    #Drop CoV row 
+    dfc = df.loc[df['land_occ'] != f"MeanAnnualCoV_{str(timeRange[0])}{str(timeRange[1])}"]
+    # Set the positions and width for the bars
+    bar_width = 0.35
+    x = np.arange(len(dfc['land_occ']))
+    # Plot the bars
+    fig, ax = plt.subplots(figsize=(12, 10))
+    bar1 = ax.bar(x - bar_width/2, dfc['corr_coeff'], bar_width, label='corr_coeff')
+    bar2 = ax.bar(x + bar_width/2, dfc['p_value'], bar_width, label='p_value')
+    # Add labels, title, and legend
+    ax.set_ylim(-1.1,1.1) 
+    ax.set_yticks(np.arange(-1, 1, step=0.05))
+    ax.set_xlabel('Land occupation classes or features')
+    ax.set_ylabel('Pearson correlation coefficients and p-values')
+    ax.set_title(f"Correlation between flow variability and land occupation over the period {str(timeRange[0])}-{str(timeRange[1])}")
+    ax.set_xticks(x)
+    ax.set_xticklabels(dfc['land_occ'],rotation=90)
+    ax.legend()
+    #Annotate
+    for bar in bar1:
+        height = bar.get_height()
+        if height >= 0:
+            offset = 3
+            va = 'bottom'
+        else:
+            offset = -height + 3  # Position just above zero
+            va = 'top'
+        ax.annotate(f"{height:.1e}",
+                    xy=(bar.get_x() + bar.get_width() / 2, height),
+                    xytext=(0, offset),  # 3 points vertical offset
+                    textcoords="offset points",
+                    ha='center', va=va, fontsize=5,rotation=90)
+    for bar in bar2:
+        height = bar.get_height()
+        if height >= 0:
+            offset = 3
+            va = 'bottom'
+        else:
+            offset = -height + 3  # Position just above zero
+            va = 'top'
+        ax.annotate(f"{height:.1e}",
+                    xy=(bar.get_x() + bar.get_width() / 2, height),
+                    xytext=(0, offset),  # 3 points vertical offset
+                    textcoords="offset points",
+                    ha='center', va=va, fontsize=5,rotation=90)
+    # Display the plot
+    fig.tight_layout()
+    ax.grid(axis='x')
+    plt.savefig(f"{analysisDirectory}/corrMatrix_flowDeviations_only.png", dpi=300, bbox_inches='tight')
+    plt.close()
+
+
+
+    with open(f"{wd}/log.txt", 'a') as file:
+        file.write(f"MODULE6.py Elapsed Time: {str(datetime.datetime.now()-globstart)}\n")
+
+else:
+    pass
 
 
 
