@@ -750,10 +750,10 @@ def compute_MeanMonthlyFlow_all(stationCode,stationsLayer,dstLayer,period,epsgCo
         #Grouper par mois avec la moyenne et l'écart-type comme agrégateur
 
         frames = {
+                'code_station': [],
                 'date': [],
                 'MMF_mean': [],
                 'MMF_std': [],
-                'code_station': [],
                 'geometry': []
                  }
         
@@ -977,12 +977,13 @@ def MannKendallStat(stationCode,srcFile,datesLayerName,valuesLayerName,statistic
     
     if generate_plot is True:
 
+        sci_pvalue = f"{p_value:.1e}"
         plt.plot(dates, values, 'k-', linewidth=0.5, label=f"MonthlyFlow_{statistic}")
         plt.plot(dates,
                  [slope*x+intercept for x in range(len(values))],
                  'r--',
                  linewidth=1,
-                 label=f"Global trend ({str(np.round(delta,decimals=2)*100)}% with a p-value of {str(np.round(p_value,decimals=4))})"
+                 label=f"Global trend ({str(np.round(delta,decimals=2)*100)}% with a p-value of {sci_pvalue})"
                 )
         plt.xlabel('Time series')
         if statistic == "mean":
@@ -1029,12 +1030,12 @@ def make_map_LabelsOnPoints(srcLayerPolygons,layerNameForPolygons,layerNameForLa
 
     # Plot
     fig, ax = plt.subplots(1, 1, figsize=(10, 8))
-    
+
     # Plot the polygons with data
     gdf = gpd.read_file(srcLayerPolygons)
     gdf = gdf[~gdf.geometry.isnull()]
     gdf.to_crs(3857,inplace=True) #To match contextily default crs for better rendering
-    gdf.plot(column=layerNameForPolygons, ax=ax, legend=True, cmap='viridis', alpha=0.7, edgecolor=(0, 0, 0, 0.5), linewidth=0.7)
+    gdf.plot(column=layerNameForPolygons, ax=ax, legend=True, cmap='viridis', alpha=0.7, edgecolor='black', linewidth=0.7)
 
     # Plot the polygons without data
     #list_NoNaN_stations = list(set(gdf['code_station']))
@@ -1043,7 +1044,7 @@ def make_map_LabelsOnPoints(srcLayerPolygons,layerNameForPolygons,layerNameForLa
     #gdf_catchNaN = gdf_catchNaN.loc[~gdf_catchNaN.geometry.isnull()]
     gdf_catchAll = gdf_catchAll.loc[~gdf_catchAll.geometry.isnull()]
     gdf_catchAll.to_crs(3857,inplace=True) #To match contextily default crs for better rendering
-    gdf_catchAll.plot(ax=ax, facecolor='none',edgecolor='red', linestyle='--', linewidth=0.7)
+    gdf_catchAll.plot(ax=ax, facecolor='none',edgecolor='black', linestyle=':', linewidth=0.5)
     #gdf_catchNaN.plot(ax=ax,edgecolor=(0, 0, 0, 0.5), linewidth=0.5)
 
     # Plot the points
@@ -1053,9 +1054,10 @@ def make_map_LabelsOnPoints(srcLayerPolygons,layerNameForPolygons,layerNameForLa
     gdf_points.plot(ax=ax,marker='o', markersize=5,color='black')
 
     #Add labels
-    gdf_points[f"{layerNameForLabels}_round"] = gdf_points[layerNameForLabels].round(4)
-    for x, y, label in zip(gdf_points.geometry.x, gdf_points.geometry.y, gdf_points[f"{layerNameForLabels}_round"]):
-        ax.text(x, y, label, fontsize=5, ha='right')
+    #gdf_points[f"{layerNameForLabels}_round"] = gdf_points[layerNameForLabels].round(4)
+    for x, y, label in zip(gdf_points.geometry.x, gdf_points.geometry.y, gdf_points[f"{layerNameForLabels}"]):
+        sci_label = f"{label:.1e}"
+        ax.text(x, y, sci_label, fontsize=5, ha='right',bbox=dict(facecolor='white', edgecolor='none', boxstyle='round,pad=0.3', pad=0.7, alpha=0.7))
     
     
     # Add labels using the 'name' column
@@ -1097,17 +1099,18 @@ def make_map_LabelsOnPoints(srcLayerPolygons,layerNameForPolygons,layerNameForLa
     return
 
 
-def make_map_LabelsOnPolygons(srcLayerPolygons,layerNameForPolygons,layerNameForLabels,srcLayerPoints,srcLayerPolygonsNaN,plotTitle,dstFile):
+def make_map_LabelsOnPolygons(srcLayerPolygons,layerNameForPolygons,layerNameForLabels,srcLayerPoints,srcLayerPolygonsNaN,title,dstFile,plotPoints=False):
 
     """
     Makes a map plot to render a geodataframe of polygons. Originally designed to plot results of the Mann-Kendall test. 
 
     srcLayerPolygons: /path/to/vector/layer.gpkg [string] For catchments with data #Must be a ploygon-geometry geodataframe with geometry column name = 'geometry'
     srcLayerPoints: /path/to/vector/layer.gpkg [string] For outlets #Must be a point-geometry geodataframe with geometry column name = 'geometry'
+    plotPoints: whether or not to plot the srcLayerPoints [boolean] #Default is False, to not plot the points layer ; True will plot the points layer
     srcLayerPolygonsNaN: /path/to/vector/layer.gpkg [string] For catchments with no data #Must be a ploygon-geometry geodataframe with geometry column name = 'geometry'
     layerNameForPolygons: name of the column from which to extract data that will be plotted as polygons [string]
     layerNameForLabels: name of the column from which to extract data that will be plotted as text labels overlapping polygons [string]
-    plotTitle: title to give to the plot [string]
+    title: title to give to the plot [string]
     dstFile: /path/to/destination/image.png [string]
     
     output: map with format .png
@@ -1138,11 +1141,14 @@ def make_map_LabelsOnPolygons(srcLayerPolygons,layerNameForPolygons,layerNameFor
     gdf_catchAll.plot(ax=ax, facecolor='none',edgecolor='red', linestyle='--', linewidth=0.7)
     #gdf_catchNaN.plot(ax=ax,edgecolor=(0, 0, 0, 0.5), linewidth=0.5)
 
-    # Plot the points
-    #gdf_points = gpd.read_file(srcLayerPoints)
-    #gdf_points = gdf_points[~gdf_points.geometry.isnull()]
-    #gdf_points.to_crs(3857,inplace=True)
-    #gdf_points.plot(ax=ax,marker='o', markersize=5,color='black')
+    # Plot the points if needed
+    if plotPoints is True:
+        gdf_points = gpd.read_file(srcLayerPoints)
+        gdf_points = gdf_points[~gdf_points.geometry.isnull()]
+        gdf_points.to_crs(3857,inplace=True)
+        gdf_points.plot(ax=ax,marker='o', markersize=5,color='black')
+    else: 
+        pass
 
     #Add labels
     #for x, y, label in zip(gdf_points.geometry.x, gdf_points.geometry.y, gdf_points[layerNameForLabels]):
@@ -1163,7 +1169,7 @@ def make_map_LabelsOnPolygons(srcLayerPolygons,layerNameForPolygons,layerNameFor
         ax.text(centroid.x, centroid.y, row[f"{layerNameForLabels}_round"], fontsize=7, ha='center', va='center', color='black')
     
     # Add a title and labels (optional)
-    ax.set_title(plotTitle, pad=5, fontsize=10)
+    ax.set_title(title, pad=5, fontsize=10)
     ax.set_xlabel('Longitude')
     ax.set_ylabel('Latitude')
     plt.tight_layout()
@@ -2174,6 +2180,7 @@ def clip_to_shapefile(srcFile,dstFile,EPSG,maskFile):
 
     #Execute gdalwarp
     cmd = f"gdalwarp -overwrite -s_srs EPSG:{str(EPSG)} -t_srs EPSG:{str(EPSG)} -of GTiff -cutline {str(maskFile)} -cl {str(layerName)} -crop_to_cutline {str(srcFile)} {str(dstFile)}"
+    print(cmd)
     os.system(cmd)
 
     return
