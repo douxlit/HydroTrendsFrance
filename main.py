@@ -62,6 +62,9 @@ runModule3 = True
 runModule4 = True
 runModule5 = False
 
+#Consumption
+runModuleBNPE = True #True if Module BNPE needs to be ran ; False if not
+
 #Miscellaneous
 flushAllDirectories = False # Usefull to study a new AoI
 operationStatus = False #True will keep only those stations that are still operating now a days; False will keep them all 
@@ -929,7 +932,84 @@ if runModule5 is True:
 else:
     pass
 
+#####################################################
+# Module BNPE : Create layer with consumptions data #
+#####################################################
 
+if runModuleBNPE is True:
+
+    import BNPE
+
+    globstart = datetime.datetime.now()
+
+    print('Run MODULE BNPE')
+    
+    print("Get the spatial extent of the AoI")
+    
+    if AoI_fileIsRaster is True:
+        AoI_bbox = BNPE.extract_Rasterbbox_list(AoI_filePath)
+    else:
+        AoI_bbox = BNPE.extract_Vectorbbox_list(AoI_filePath)
+
+    print(f"AoI_bbox : {AoI_bbox}")
+
+    water_type = ['CONT'] #The water type can be : 'CONT' for continental, 'SOUT' for underground, 'LIT' for maritim
+    year_list = [a for a in range(timeRange[0], timeRange[1]+1)] #adapt time_range to BNPE.py functions
+
+    try :
+        print("Retrieving installations interfering with natural water flows within the AoI")
+        O = BNPE.ouvrages(water_type, bbox=AoI_bbox)
+        O_f = O['features']
+
+        ouv_multi = BNPE.extract_ouvrages(O_f, 200)
+        print('OK')
+
+        print("Retrieving volumes (per year and per installation) of surface water used by humans within the AoI")
+        C = BNPE.multi_chroniques(ouv_multi, year_list, bbox=AoI_bbox)
+        print('OK')
+
+        print("Exporting final geojson layer to use in QGIS for further analysis")
+        BNPE_file = os.path.normpath(rf"{dataDirectory}/BNPE.geojson")
+        C_O = BNPE.chroniques_ouvrages(BNPE_file, C, O, year_list)
+        print('OK')
+
+        print("Create debits_naturels layer")
+        #Define path
+        polygone_path = os.path.normpath(rf"{analysisDirectory}/stations_observations_mmf_average_20122021_subcatchments.gpkg")
+        points_path = BNPE_file
+        output_path = os.path.normpath(rf"{analysisDirectory}/subcatchments_mmf_withdrawals.gpkg")
+        debits_naturels_path = os.path.normpath(rf"{analysisDirectory}/debits_naturels.gpkg")
+
+        #Sum withdrawals within every subcatchments
+        BNPE.count_points(polygone_path, points_path, output_path, 'AnnualMMF', 'Prel_Total')
+
+        #Calculate Natural Flows
+        subcatchment_withdraw = output_path
+        debits_naturels = gpd.read_file(subcatchment_withdraw)
+        debits_naturels['debits naturels'] = debits_naturels['MeanAnnualFlow_20122021'] + debits_naturels['Prel_Total']
+        debits_naturels['limite planetaire'] = (debits_naturels['debits naturels']-debits_naturels['MeanAnnualFlow_20122021'])/debits_naturels['debits naturels']
+
+        #Export debits_naturels layer for QGIS use purpose
+        debits_naturels.to_file(debits_naturels_path, driver='GPKG')
+        print('OK')
+
+    except Exception as e :
+        err = f"An Error occured in module BNPE : {e}"
+        print(colored(err, 'red'))
+        with open(f"{wd}/log.txt", 'a') as file:
+            file.write(f"{err}\n")
+        raise(e)
+    
+    print("Elapsed Time in M_BNPE: ", datetime.datetime.now()-globstart)
+        
+    with open(f"{wd}/log.txt", 'a') as file:
+        file.write(f"MODULE0.py Elapsed Time: {str(datetime.datetime.now()-globstart)}\n")
+
+else:
+    pass
+
+
+print("Total Elapsed Time:", datetime.datetime.now()-globstart0)
 
 
 
