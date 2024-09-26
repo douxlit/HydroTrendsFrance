@@ -636,42 +636,48 @@ def compute_MeanMonthlyFlow_average(stationCode,stationsLayer,dstLayer,period,ge
         final_gdf.to_file(dstLayer)
         
         #Draw hydrogram if specified by generate_plot=True
-        if generate_plot is True:
+        try :
+            if generate_plot is True:
 
-            fig, ax1 = plt.subplots()
+                fig, ax1 = plt.subplots()
 
-            #Plot hydrogram on the left y-axis
-            
-            x_axis = [x+1 for x in range(12)]
-            ax1.errorbar(x_axis, mu_Y, yerr = sigma_Y, fmt ='o', label='MMF', color='#1f77b4')
-            #plt.xticks(x_axis)
-            ax1.set_ylabel(f"Mean Monthly Flow [l.s-1]",fontsize=9, color='#1f77b4')
-            ax1.set_xlabel('month',fontsize=9)
-            ax1.tick_params(axis='y', labelcolor='#1f77b4')
+                #Plot hydrogram on the left y-axis
+                
+                x_axis = [x+1 for x in range(12)]
+                ax1.errorbar(x_axis, mu_Y, yerr = sigma_Y, fmt ='o', label='MMF', color='#1f77b4')
+                #plt.xticks(x_axis)
+                ax1.set_ylabel(f"Mean Monthly Flow [l.s-1]",fontsize=9, color='#1f77b4')
+                ax1.set_xlabel('month',fontsize=9)
+                ax1.tick_params(axis='y', labelcolor='#1f77b4')
 
-            #Plot CoV on the right y-axis
-            col_list = [f"CoV_month{x}_{period[0]}{period[1]}" for x in range(1,13)]
-            final_gdf_sigma = final_gdf[col_list]
-            final_gdfT = final_gdf_sigma.T #gives a df with one column 'code_station' and former columns turned to rows
-            cov_list = list(final_gdfT[0])
-            
-            ax2 = ax1.twinx()
-            ax2.plot(x_axis, cov_list, '4', label='CoV', color='#d62728', markersize=9)
-            ax2.set_ylabel('Monthly Coefficients of Variation', color='#d62728',fontsize=9)
-            ax2.tick_params(axis='y', labelcolor='#d62728')
-            
-            ax1.set_xticks(x_axis)
-            ax1.set_xticklabels(['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'])
-            ax2.set_yticks(np.arange(np.round(min(cov_list),decimals=2),np.round(max(cov_list),decimals=2),0.1))
-            ax2.grid(True)
-            
-            fig.suptitle(f"Mean Monthly Flow and Variation of station {str(stationCode)} over the period {period[0]}-{period[1]}",fontsize=9)
-            
-            fig.text(0.03, 0.03, '(c) Q. DASSIBAT -- CC BY 4.0', fontsize=5, color='gray', va='bottom', ha='left')
-            
-            plt.savefig(f"./analysis/MMF_{stationCode}_{period[0]}{period[1]}.png",bbox_inches='tight',dpi=300)
-            plt.close() #sinon à chaque appel de la fonction la figure est dessinée sur le même graphe
-        
+                #Plot CoV on the right y-axis
+                col_list = [f"CoV_month{x}_{period[0]}{period[1]}" for x in range(1,13)]
+                final_gdf_sigma = final_gdf[col_list]
+                final_gdfT = final_gdf_sigma.T #gives a df with one column 'code_station' and former columns turned to rows
+                print(final_gdfT)
+                cov_list = list(final_gdfT[0])
+                print(cov_list)
+                
+                ax2 = ax1.twinx()
+                ax2.plot(x_axis, cov_list, '4', label='CoV', color='#d62728', markersize=9)
+                ax2.set_ylabel('Monthly Coefficients of Variation', color='#d62728',fontsize=9)
+                ax2.tick_params(axis='y', labelcolor='#d62728')
+                
+                ax1.set_xticks(x_axis)
+                ax1.set_xticklabels(['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'])
+                ax2.set_yticks(np.arange(np.round(min(cov_list),decimals=2),np.round(max(cov_list),decimals=2),0.1))
+                ax2.grid(True)
+                
+                fig.suptitle(f"Mean Monthly Flow and Variation of station {str(stationCode)} over the period {period[0]}-{period[1]}",fontsize=9)
+                
+                fig.text(0.03, 0.03, '(c) Q. DASSIBAT -- CC BY 4.0', fontsize=5, color='gray', va='bottom', ha='left')
+                
+                plt.savefig(f"./analysis/MMF_{stationCode}_{period[0]}{period[1]}.png",bbox_inches='tight',dpi=300)
+                plt.close() #sinon à chaque appel de la fonction la figure est dessinée sur le même graphe
+
+        except Exception as e :
+            raise Exception(f"ERROR in drawing hydrograms, in func compute_MeanMonthlyFlow_average.\ncov_list = {cov_list}\n{e}")
+
         else:
             pass
             
@@ -750,10 +756,10 @@ def compute_MeanMonthlyFlow_all(stationCode,stationsLayer,dstLayer,period,epsgCo
         #Grouper par mois avec la moyenne et l'écart-type comme agrégateur
 
         frames = {
-                'code_station': [],
                 'date': [],
                 'MMF_mean': [],
                 'MMF_std': [],
+                'code_station': [],
                 'geometry': []
                  }
         
@@ -820,186 +826,196 @@ def MannKendallStat(stationCode,srcFile,datesLayerName,valuesLayerName,statistic
     ############
     print("######################### 0th Prepare data")
     #############
+    try :
+        gdf = pd.read_csv(srcFile)
+        
+        tmp = gdf.copy()
+        #Sort ascending by date
+        tmp[f"{datesLayerName}"] = pd.to_datetime(tmp[f"{datesLayerName}"])
+        tmp = tmp.sort_values(by=f"{datesLayerName}")
+        tmp.reset_index(drop=True, inplace=True)
 
-    gdf = pd.read_csv(srcFile)
+        dates = list(tmp[f"{datesLayerName}"])
+        values = list(tmp[f"{valuesLayerName}"])
     
-    tmp = gdf.copy()
-    #Sort ascending by date
-    tmp[f"{datesLayerName}"] = pd.to_datetime(tmp[f"{datesLayerName}"])
-    tmp = tmp.sort_values(by=f"{datesLayerName}")
-    tmp.reset_index(drop=True, inplace=True)
-
-    dates = list(tmp[f"{datesLayerName}"])
-    values = list(tmp[f"{valuesLayerName}"])
+    except Exception as e:
+        raise Exception(f"ERROR in hdrofunc.MannKendallStat, in 0th Prepare data.\n{e}")
 
     #############
     print("######################### 1st Compute MK regression")
     #############
+    try :
+        #########
+        # MK test
+        #########
 
-    #########
-    # MK test
-    #########
+        #Import time serie and removing NaN values
+        
+        cc = values.copy()
+        j_serie = [x for x in cc if not np.isnan(x)]
+        ccc = values.copy()
+        k_serie = [x for x in ccc if not np.isnan(x)]
+        
+        #Computing sign of each differences
 
-    #Import time serie and removing NaN values
+        s = []
+        Qi = []
+
+        for k in range(len(k_serie)):
+
+            Qj = []
+
+            for j in range(k+1,len(j_serie)):
+                tmp = j_serie[j]-k_serie[k]
+                if tmp > 0:
+                    s.append(1)
+                elif tmp == 0:
+                    s.append(0)
+                else:
+                    s.append(-1)
+                Qj.append(tmp/(j-k)) #To further compute Sen's slope
+
+            for elem in range(len(Qj)):
+                Qi.append(Qj[elem])
+
+        s_sum = np.asarray(s).sum()
+
+
+        #Computing tied groups
+
+        a_serie = np.asarray(j_serie)
+        val, counts = np.unique(a_serie, return_counts=True)
+
+        g = []
+
+        for t in range(len(counts)):
+
+            prod = counts[t]*(counts[t]-1)*(2*counts[t]+5)
+            g.append(prod)
+
+        g_sum = np.asarray(g).sum()
+
+        #computing variance of sign as a function of tied groups
+
+        n = len(j_serie)
+        var_s = (1/18)*(n*(n-1)*(2*n+5)-g_sum)
+
+        #Compute test statistic Z 
+
+        if s_sum > 0:
+            z = (s_sum-1)/np.sqrt(np.asarray(var_s))
+        elif s_sum == 0:
+            z = 0
+        else:
+            z = (s_sum+1)/np.sqrt(np.asarray(var_s))
+        
+        #Compute Sen's slope estimator (see: DOI 10.1007/s11069-015-1644-7)
+        Qi_sorted = np.sort(np.asarray(Qi))
+        Qis_list = list(Qi_sorted)
+        Qi1 = Qis_list[int(np.trunc(len(Qis_list)/2))]
+        Qi2 = Qis_list[int(np.trunc((len(Qis_list)+2)/2))]
+        slope = (1/2)*(Qi1+Qi2)
+        
+        #Compute Sen's regression line
+        #https://en.wikipedia.org/wiki/Theil%E2%80%93Sen_estimator
+        #Line : y = mx + b where m = Sen's slope and b = med(bi) = med(yi - m.xi)
+        med = []
+        for y in range(len(j_serie)-1):
+            p = j_serie[y+1] - slope*y
+            med.append(p)
+
+        numeric_med = [float(x) for x in med]
+        intercept = np.median(np.asarray(numeric_med))
+        
+        #delta = flow variation between (i) the estimated flow at strating time in the serie and (ii) estimated flow at ending time in the serie, expressed in % of ((ii)-(i))/(i)
+        delta = ((slope*len(j_serie)+intercept) - intercept) / intercept
     
-    cc = values.copy()
-    j_serie = [x for x in cc if not np.isnan(x)]
-    ccc = values.copy()
-    k_serie = [x for x in ccc if not np.isnan(x)]
-    
-    #Computing sign of each differences
-
-    s = []
-    Qi = []
-
-    for k in range(len(k_serie)):
-
-        Qj = []
-
-        for j in range(k+1,len(j_serie)):
-            tmp = j_serie[j]-k_serie[k]
-            if tmp > 0:
-                s.append(1)
-            elif tmp == 0:
-                s.append(0)
-            else:
-                s.append(-1)
-            Qj.append(tmp/(j-k)) #To further compute Sen's slope
-
-        for elem in range(len(Qj)):
-            Qi.append(Qj[elem])
-
-    s_sum = np.asarray(s).sum()
-
-
-    #Computing tied groups
-
-    a_serie = np.asarray(j_serie)
-    val, counts = np.unique(a_serie, return_counts=True)
-
-    g = []
-
-    for t in range(len(counts)):
-
-        prod = counts[t]*(counts[t]-1)*(2*counts[t]+5)
-        g.append(prod)
-
-    g_sum = np.asarray(g).sum()
-
-    #computing variance of sign as a function of tied groups
-
-    n = len(j_serie)
-    var_s = (1/18)*(n*(n-1)*(2*n+5)-g_sum)
-
-    #Compute test statistic Z 
-
-    if s_sum > 0:
-        z = (s_sum-1)/np.sqrt(np.asarray(var_s))
-    elif s_sum == 0:
-        z = 0
-    else:
-        z = (s_sum+1)/np.sqrt(np.asarray(var_s))
-    
-    #Compute Sen's slope estimator (see: DOI 10.1007/s11069-015-1644-7)
-    Qi_sorted = np.sort(np.asarray(Qi))
-    Qis_list = list(Qi_sorted)
-    Qi1 = Qis_list[int(np.trunc(len(Qis_list)/2))]
-    Qi2 = Qis_list[int(np.trunc((len(Qis_list)+2)/2))]
-    slope = (1/2)*(Qi1+Qi2)
-    
-    #Compute Sen's regression line
-    #https://en.wikipedia.org/wiki/Theil%E2%80%93Sen_estimator
-    #Line : y = mx + b where m = Sen's slope and b = med(bi) = med(yi - m.xi)
-    med = []
-    for y in range(len(j_serie)-1):
-        p = j_serie[y+1] - slope*y
-        med.append(p)
-
-    numeric_med = [float(x) for x in med]
-    intercept = np.median(np.asarray(numeric_med))
-    
-    #delta = flow variation between (i) the estimated flow at strating time in the serie and (ii) estimated flow at ending time in the serie, expressed in % of ((ii)-(i))/(i)
-    delta = ((slope*len(j_serie)+intercept) - intercept) / intercept
+    except Exception as e:
+        raise Exception(f"ERROR in hdrofunc.MannKendallStat, in 1st Compute MK regression.\n{e}")
     
     #############
     print("######################### 2nd Draw hypothesis test on z-value")
     #############
+    try :
+        #Conduct a two-tailed test independent on the sign of z
+        #H0: no monotonic trend ; versus H1: monotonic trend
 
-    #Conduct a two-tailed test independent on the sign of z
-    #H0: no monotonic trend ; versus H1: monotonic trend
+        p_value = 2 * (1 - scipy.stats.norm.cdf(abs(z)))
 
-    p_value = 2 * (1 - scipy.stats.norm.cdf(abs(z)))
-
-    oneSideTest = False
-    if oneSideTest is True:
-    
-        if z <= float(0): 
-            
-            #H0: no monotonic trend ; versus H1: downward monotonic trend
+        oneSideTest = False
+        if oneSideTest is True:
         
-            p_value = scipy.stats.norm.cdf(z)
-            #Find alpha (significance level) such that H0 is rejected over H1, i.e. alpha | p_value < alpha (alpha such that z_value is significant)
-            c = []
-            for alpha in np.arange(0.01,0.98,1/100):
-                if p_value < alpha:
-                    c.append(alpha)
-                else:
-                    pass
-            if len(c) != 0:
-                first = c[0]
-                confidence = 1 - first
-            else:
-                confidence = 0
-    
-        else:
-    
-            #H0: no monotonic trend ; versus H1: upward monotonic trend
+            if z <= float(0): 
+                
+                #H0: no monotonic trend ; versus H1: downward monotonic trend
             
-            p_value = 1 - scipy.stats.norm.cdf(z)
-            #Find alpha (significance level) such that H0 is rejected over H1, i.e. alpha | (1-p_value) - alpha < 0 (alpha such that z_value is significant)
-            c = []
-            for alpha in np.arange(0.01,0.98,1/100):
-                if p_value < alpha:
-                    c.append(alpha)
+                p_value = scipy.stats.norm.cdf(z)
+                #Find alpha (significance level) such that H0 is rejected over H1, i.e. alpha | p_value < alpha (alpha such that z_value is significant)
+                c = []
+                for alpha in np.arange(0.01,0.98,1/100):
+                    if p_value < alpha:
+                        c.append(alpha)
+                    else:
+                        pass
+                if len(c) != 0:
+                    first = c[0]
+                    confidence = 1 - first
                 else:
-                    pass
-            if len(c) != 0:
-                first = c[0]
-                confidence = 1 - first
+                    confidence = 0
+        
             else:
-                confidence = 0
-    else:
-        pass
+        
+                #H0: no monotonic trend ; versus H1: upward monotonic trend
+                
+                p_value = 1 - scipy.stats.norm.cdf(z)
+                #Find alpha (significance level) such that H0 is rejected over H1, i.e. alpha | (1-p_value) - alpha < 0 (alpha such that z_value is significant)
+                c = []
+                for alpha in np.arange(0.01,0.98,1/100):
+                    if p_value < alpha:
+                        c.append(alpha)
+                    else:
+                        pass
+                if len(c) != 0:
+                    first = c[0]
+                    confidence = 1 - first
+                else:
+                    confidence = 0
+        else:
+            pass
+
+    except Exception as e:
+        raise Exception(f"ERROR in hdrofunc.MannKendallStat, in 2nd Draw hypothesis test on z-value.\n{e}")
 
     ############
     print("######################### 3rd Plot graphs if required")
     ############
-    
-    if generate_plot is True:
+    try :
+        if generate_plot is True:
 
-        sci_pvalue = f"{p_value:.1e}"
-        plt.plot(dates, values, 'k-', linewidth=0.5, label=f"MonthlyFlow_{statistic}")
-        plt.plot(dates,
-                 [slope*x+intercept for x in range(len(values))],
-                 'r--',
-                 linewidth=1,
-                 label=f"Global trend ({str(np.round(delta,decimals=2)*100)}% with a p-value of {sci_pvalue})"
-                )
-        plt.xlabel('Time series')
-        if statistic == "mean":
-            plt.ylabel('Mean Monthly Flow [l.s-1]')
+            plt.plot(dates, values, 'k-', linewidth=0.5, label=f"MonthlyFlow_{statistic}")
+            plt.plot(dates,
+                    [slope*x+intercept for x in range(len(values))],
+                    'r--',
+                    linewidth=1,
+                    label=f"Global trend ({str(np.round(delta,decimals=2)*100)}% with a p-value of {str(np.round(p_value,decimals=4))})"
+                    )
+            plt.xlabel('Time series')
+            if statistic == "mean":
+                plt.ylabel('Mean Monthly Flow [l.s-1]')
+            else:
+                plt.ylabel('Monthly Flow Deviation [l.s-1]')
+            plt.legend(loc="upper right")
+            plt.title(f"Monthly flow variation and linear trend at gauging station {stationCode}") 
+            plt.text(0.03, 0.03, '(c) Q. DASSIBAT -- CC BY 4.0', fontsize=5, color='gray', transform=plt.gcf().transFigure)
+            plt.savefig(f"./analysis/MannKendallRegression_MMF_{statistic}_station{stationCode}.png",dpi=300)
+            #plt.show()
+            plt.close()
+
         else:
-            plt.ylabel('Monthly Flow Deviation [l.s-1]')
-        plt.legend(loc="upper right")
-        plt.title(f"Monthly flow variation and linear trend at gauging station {stationCode}") 
-        plt.text(0.03, 0.03, '(c) Q. DASSIBAT -- CC BY 4.0', fontsize=5, color='gray', transform=plt.gcf().transFigure)
-        plt.savefig(f"./analysis/MannKendallRegression_MMF_{statistic}_station{stationCode}.png",dpi=300)
-        #plt.show()
-        plt.close()
-
-    else:
-        pass
-
+            pass
+    
+    except Exception as e:
+        raise Exception(f"ERROR in hdrofunc.MannKendallStat, in 3rd Plot graphs.\n{e}")
 
     return z, slope, intercept, delta, p_value
 
@@ -1030,12 +1046,12 @@ def make_map_LabelsOnPoints(srcLayerPolygons,layerNameForPolygons,layerNameForLa
 
     # Plot
     fig, ax = plt.subplots(1, 1, figsize=(10, 8))
-
+    
     # Plot the polygons with data
     gdf = gpd.read_file(srcLayerPolygons)
     gdf = gdf[~gdf.geometry.isnull()]
     gdf.to_crs(3857,inplace=True) #To match contextily default crs for better rendering
-    gdf.plot(column=layerNameForPolygons, ax=ax, legend=True, cmap='viridis', alpha=0.7, edgecolor='black', linewidth=0.7)
+    gdf.plot(column=layerNameForPolygons, ax=ax, legend=True, cmap='viridis', alpha=0.7, edgecolor=(0, 0, 0, 0.5), linewidth=0.7)
 
     # Plot the polygons without data
     #list_NoNaN_stations = list(set(gdf['code_station']))
@@ -1044,7 +1060,7 @@ def make_map_LabelsOnPoints(srcLayerPolygons,layerNameForPolygons,layerNameForLa
     #gdf_catchNaN = gdf_catchNaN.loc[~gdf_catchNaN.geometry.isnull()]
     gdf_catchAll = gdf_catchAll.loc[~gdf_catchAll.geometry.isnull()]
     gdf_catchAll.to_crs(3857,inplace=True) #To match contextily default crs for better rendering
-    gdf_catchAll.plot(ax=ax, facecolor='none',edgecolor='black', linestyle=':', linewidth=0.5)
+    gdf_catchAll.plot(ax=ax, facecolor='none',edgecolor='red', linestyle='--', linewidth=0.7)
     #gdf_catchNaN.plot(ax=ax,edgecolor=(0, 0, 0, 0.5), linewidth=0.5)
 
     # Plot the points
@@ -1054,10 +1070,9 @@ def make_map_LabelsOnPoints(srcLayerPolygons,layerNameForPolygons,layerNameForLa
     gdf_points.plot(ax=ax,marker='o', markersize=5,color='black')
 
     #Add labels
-    #gdf_points[f"{layerNameForLabels}_round"] = gdf_points[layerNameForLabels].round(4)
-    for x, y, label in zip(gdf_points.geometry.x, gdf_points.geometry.y, gdf_points[f"{layerNameForLabels}"]):
-        sci_label = f"{label:.1e}"
-        ax.text(x, y, sci_label, fontsize=5, ha='right',bbox=dict(facecolor='white', edgecolor='none', boxstyle='round,pad=0.3', pad=0.7, alpha=0.7))
+    gdf_points[f"{layerNameForLabels}_round"] = gdf_points[layerNameForLabels].round(4)
+    for x, y, label in zip(gdf_points.geometry.x, gdf_points.geometry.y, gdf_points[f"{layerNameForLabels}_round"]):
+        ax.text(x, y, label, fontsize=5, ha='right')
     
     
     # Add labels using the 'name' column
@@ -1099,18 +1114,17 @@ def make_map_LabelsOnPoints(srcLayerPolygons,layerNameForPolygons,layerNameForLa
     return
 
 
-def make_map_LabelsOnPolygons(srcLayerPolygons,layerNameForPolygons,layerNameForLabels,srcLayerPoints,srcLayerPolygonsNaN,title,dstFile,plotPoints=False):
+def make_map_LabelsOnPolygons(srcLayerPolygons,layerNameForPolygons,layerNameForLabels,srcLayerPoints,srcLayerPolygonsNaN,plotTitle,dstFile):
 
     """
     Makes a map plot to render a geodataframe of polygons. Originally designed to plot results of the Mann-Kendall test. 
 
     srcLayerPolygons: /path/to/vector/layer.gpkg [string] For catchments with data #Must be a ploygon-geometry geodataframe with geometry column name = 'geometry'
     srcLayerPoints: /path/to/vector/layer.gpkg [string] For outlets #Must be a point-geometry geodataframe with geometry column name = 'geometry'
-    plotPoints: whether or not to plot the srcLayerPoints [boolean] #Default is False, to not plot the points layer ; True will plot the points layer
     srcLayerPolygonsNaN: /path/to/vector/layer.gpkg [string] For catchments with no data #Must be a ploygon-geometry geodataframe with geometry column name = 'geometry'
     layerNameForPolygons: name of the column from which to extract data that will be plotted as polygons [string]
     layerNameForLabels: name of the column from which to extract data that will be plotted as text labels overlapping polygons [string]
-    title: title to give to the plot [string]
+    plotTitle: title to give to the plot [string]
     dstFile: /path/to/destination/image.png [string]
     
     output: map with format .png
@@ -1141,14 +1155,11 @@ def make_map_LabelsOnPolygons(srcLayerPolygons,layerNameForPolygons,layerNameFor
     gdf_catchAll.plot(ax=ax, facecolor='none',edgecolor='red', linestyle='--', linewidth=0.7)
     #gdf_catchNaN.plot(ax=ax,edgecolor=(0, 0, 0, 0.5), linewidth=0.5)
 
-    # Plot the points if needed
-    if plotPoints is True:
-        gdf_points = gpd.read_file(srcLayerPoints)
-        gdf_points = gdf_points[~gdf_points.geometry.isnull()]
-        gdf_points.to_crs(3857,inplace=True)
-        gdf_points.plot(ax=ax,marker='o', markersize=5,color='black')
-    else: 
-        pass
+    # Plot the points
+    #gdf_points = gpd.read_file(srcLayerPoints)
+    #gdf_points = gdf_points[~gdf_points.geometry.isnull()]
+    #gdf_points.to_crs(3857,inplace=True)
+    #gdf_points.plot(ax=ax,marker='o', markersize=5,color='black')
 
     #Add labels
     #for x, y, label in zip(gdf_points.geometry.x, gdf_points.geometry.y, gdf_points[layerNameForLabels]):
@@ -1169,7 +1180,7 @@ def make_map_LabelsOnPolygons(srcLayerPolygons,layerNameForPolygons,layerNameFor
         ax.text(centroid.x, centroid.y, row[f"{layerNameForLabels}_round"], fontsize=7, ha='center', va='center', color='black')
     
     # Add a title and labels (optional)
-    ax.set_title(title, pad=5, fontsize=10)
+    ax.set_title(plotTitle, pad=5, fontsize=10)
     ax.set_xlabel('Longitude')
     ax.set_ylabel('Latitude')
     plt.tight_layout()
@@ -1424,6 +1435,10 @@ def raster_to_polygons(srcFile,dstFile,epsgCode,zName,zRestriction=None):
     import pandas as pd
     import os
 
+    # Full path to gdal_polygonize.py & python.exe
+    gdal_polygonize_path = os.path.normpath(r"C:/Users/ITR2276/AppData/Local/miniconda3/envs/pcraster/Scripts/gdal_polygonize.py")
+    python_path = os.path.normpath(r"C:/Users/ITR2276/AppData/Local/miniconda3/envs/pcraster/python.exe")
+
     #Call function relio.split_singleband() to split srcFile raster into multiple rasters with unique pixel value
     max = split_singleband(srcFile,epsgCode,zRestriction) #dstFile = f"{srcFile[:-4]}_PixelValueIs{#}.tif"
 
@@ -1434,10 +1449,10 @@ def raster_to_polygons(srcFile,dstFile,epsgCode,zName,zRestriction=None):
     if zRestriction is None:
     
         for val in range(1,int(max)+1): #catchment=0 is a "fake" catchment generated by pcraster.subcatchment(), so forget it
-    
-            rasterFile = f"{srcFile[:-4]}_PixelValueIs{str(val)}.tif"
-            tmpVectorFile = f"{srcFile[:-4]}_PixelValueIs{str(val)}.gpkg"
-            cmd = 'gdal_polygonize.py {r} -overwrite -b 1 -f "GPKG" {v} OUTPUT {z}'.format(r=rasterFile,v=tmpVectorFile,z=zName)
+
+            rasterFile = os.path.normpath(rf"{srcFile[:-4]}_PixelValueIs{str(val)}.tif")
+            tmpVectorFile = os.path.normpath(rf"{srcFile[:-4]}_PixelValueIs{str(val)}.gpkg")
+            cmd = f'{python_path} {gdal_polygonize_path} {rasterFile} -overwrite -b 1 -f "GPKG" {tmpVectorFile} OUTPUT {zName}'
             os.system(cmd)
             #The above gdal command returns a vector file with multiple entities: one polygon for the envelop, and multiple polygons where region is broken
             #So we remove the envelop (catch_id=0) polygon mnd merge the others 
@@ -1477,9 +1492,9 @@ def raster_to_polygons(srcFile,dstFile,epsgCode,zName,zRestriction=None):
 
         for val in list(zRestriction): #catchment=0 is a "fake" catchment generated by pcraster.subcatchment(), so forget it
     
-            rasterFile = f"{srcFile[:-4]}_PixelValueIs{str(val)}.tif"
-            tmpVectorFile = f"{srcFile[:-4]}_PixelValueIs{str(val)}.gpkg"
-            cmd = 'gdal_polygonize.py {r} -overwrite -b 1 -f "GPKG" {v} OUTPUT {z}'.format(r=rasterFile,v=tmpVectorFile,z=zName)
+            rasterFile = os.path.normpath(rf"{srcFile[:-4]}_PixelValueIs{str(val)}.tif")
+            tmpVectorFile = os.path.normpath(rf"{srcFile[:-4]}_PixelValueIs{str(val)}.gpkg")
+            cmd = f'{python_path} {gdal_polygonize_path} {rasterFile} -overwrite -b 1 -f "GPKG" {tmpVectorFile} OUTPUT {zName}'
             os.system(cmd)
             #The above gdal command returns a vector file with multiple entities: one polygon for the envelop, and multiple polygons where region is broken
             #So we remove the envelop (catch_id=0) polygon mnd merge the others 
@@ -2180,7 +2195,6 @@ def clip_to_shapefile(srcFile,dstFile,EPSG,maskFile):
 
     #Execute gdalwarp
     cmd = f"gdalwarp -overwrite -s_srs EPSG:{str(EPSG)} -t_srs EPSG:{str(EPSG)} -of GTiff -cutline {str(maskFile)} -cl {str(layerName)} -crop_to_cutline {str(srcFile)} {str(dstFile)}"
-    print(cmd)
     os.system(cmd)
 
     return
